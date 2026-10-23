@@ -1,0 +1,2857 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>解答用紙作成専用（命令文／融合）</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+  body { font-family:"Yu Gothic UI","Meiryo","Noto Sans JP",sans-serif; }
+  textarea,input,select { font-family:Consolas,"Yu Gothic UI",monospace; }
+  #preview { background:#fff; box-shadow:0 4px 16px rgba(0,0,0,0.15); touch-action:none; }
+  #preview.draggable { cursor:grab; }
+  #preview.dragging { cursor:grabbing; }
+  #preview.resizing { cursor:nwse-resize; }
+  #preview.desc-hover { cursor:move; }
+  .canvas-wrap { display:flex; align-items:center; justify-content:center; height:calc(100vh - 180px); overflow:auto; }
+  .mode-tab { padding:6px 12px; font-size:12px; font-weight:bold; border-radius:8px 8px 0 0; cursor:pointer; border:1px solid #cbd5e1; border-bottom:none; white-space:nowrap; }
+  .mode-tab.active { background:#fff; color:#1c1c1a; border-color:#e2e8f0; }
+  .mode-tab.inactive { background:#e2e8f0; color:#64748b; }
+  .fu-desc-row { background:#fff; border:1px solid #cbd5e1; border-radius:6px; padding:4px; }
+  .subtab { flex:1; padding:6px 8px; font-size:11px; font-weight:bold; border-radius:6px; cursor:pointer; border:1px solid #cbd5e1; }
+  .subtab.active { background:#2563eb; color:#fff; border-color:#1d4ed8; }
+  .subtab.inactive { background:#e2e8f0; color:#475569; }
+</style>
+</head>
+<body class="bg-slate-100 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 px-4 py-2 sticky top-0 z-20 shadow-sm">
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-base font-bold text-slate-800">📄 解答用紙作成専用</h1>
+      <p class="text-[11px] text-slate-500">命令文モードで骨組み作成 → 融合モードで微調整 → manifest/answer_key 出力</p>
+    </div>
+    <div id="summary" class="text-sm font-bold text-slate-700"></div>
+  </div>
+</header>
+
+<main class="max-w-[1800px] mx-auto p-3 grid grid-cols-12 gap-3 items-start">
+  <aside class="col-span-4 bg-white rounded-xl border border-slate-200 sticky top-16 max-h-[calc(100vh-80px)] overflow-y-auto">
+    <div class="flex flex-wrap gap-1 px-2 pt-2 bg-slate-100">
+      <div id="tab-cmd" class="mode-tab active" data-mode="cmd">📝 命令文</div>
+      <div id="tab-fusion" class="mode-tab inactive" data-mode="fusion">🔀 融合</div>
+    </div>
+
+    <div class="p-3 space-y-3">
+      <div id="panel-cmd" class="space-y-3">
+        <div class="flex gap-1 mb-2">
+          <button id="subtab-manual" class="subtab active">✏️ 手書き</button>
+          <button id="subtab-text" class="subtab inactive">📖 問題文から</button>
+        </div>
+        <div id="subpanel-manual" class="space-y-3">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 mb-1">プリセット</label>
+            <select id="preset" class="w-full text-xs px-2 py-1.5 rounded border border-slate-300"></select>
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-700 mb-1">命令文（1行に1大問）</label>
+            <textarea id="cmd" rows="6" class="w-full text-xs p-2 rounded border border-slate-300 font-mono"></textarea>
+          </div>
+        </div>
+        <div id="subpanel-text" class="space-y-3 hidden">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 mb-1">問題文・模範解答</label>
+            <textarea id="problem_text" rows="10" class="w-full text-xs p-2 rounded border border-slate-300 font-mono"></textarea>
+          </div>
+          <div class="flex gap-2">
+            <button id="btn_parse_local" class="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded">✨ ローカル解析</button>
+            <button id="btn_parse_ai" class="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded">🤖 AI解析</button>
+          </div>
+          <div class="flex items-center gap-1">
+            <span class="text-[11px] font-semibold text-slate-600">🔑 Gemini:</span>
+            <input id="api_key" type="password" placeholder="AI解析時のみ" class="flex-1 text-xs px-2 py-1 rounded border border-slate-300">
+            <label class="flex items-center gap-1 text-[10px] text-slate-600 cursor-pointer">
+              <input id="api_key_save" type="checkbox"> 保存
+            </label>
+          </div>
+          <div class="flex items-center gap-1">
+            <span class="text-[11px] font-semibold text-slate-600">モデル:</span>
+            <input id="api_model" type="text" value="gemini-2.0-flash" class="flex-1 text-xs px-2 py-1 rounded border border-slate-300">
+          </div>
+          <div id="parsed_summary" class="hidden text-xs bg-emerald-50 border border-emerald-200 rounded p-2 text-emerald-800"></div>
+        </div>
+        <div class="text-[10px] text-slate-500 leading-relaxed bg-slate-50 border border-slate-200 rounded p-2">
+          <b>書き方例：</b><br>
+          <code class="bg-white px-1 rounded">大問1 マーク 10問 5択 1点</code><br>
+          <code class="bg-white px-1 rounded">大問2 穴埋め 5問 3空欄 2点</code><br>
+          <code class="bg-white px-1 rounded">大問3 訂正 5問 2点</code><br>
+          <code class="bg-white px-1 rounded">大問4 英単語 8問 3点</code><br>
+          <code class="bg-white px-1 rounded">大問5 短文 4問 4点</code><br>
+          <code class="bg-white px-1 rounded">大問6 長文英作文 2問 10点 3行</code><br>
+        </div>
+        <button id="btn_cmd_to_fusion" class="w-full py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded">
+          🔀 融合モードへ取り込んで微調整
+        </button>
+      </div>
+
+      <div id="panel-fusion" class="space-y-3 hidden">
+        <div class="text-[11px] text-slate-500 bg-purple-50 border border-purple-200 rounded p-2">
+          <b>🎯 ドラッグ操作</b><br>
+          ・<b>マーク見出しバー</b>を掴む → 見出し移動<br>
+          ・<b>組列マーク群／番号列マーク群</b>を掴む → ID欄を移動<br>
+          ・<b>記述大問ヘッダー</b>を掴む → 大問ごと移動<br>
+          ・<b>設問ボックス</b>を掴む → 個別移動<br>
+          ・<b>Ctrl+Z</b> で元に戻す
+        </div>
+        <button id="btn_fu_import_from_cmd" class="w-full py-2 bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs rounded">
+          📥 命令文モードの内容を取り込む
+        </button>
+        <div>
+          <label class="block text-xs font-bold text-slate-700 mb-1">用紙サイズ</label>
+          <select id="fu_page_size" class="w-full text-xs px-2 py-1.5 rounded border border-slate-300">
+            <option value="a4_p" selected>A4 縦</option>
+            <option value="a4_l">A4 横</option>
+            <option value="a3_p">A3 縦</option>
+            <option value="a3_l">A3 横</option>
+          </select>
+        </div>
+        <div class="bg-indigo-50 border-2 border-indigo-300 rounded p-2 space-y-1.5">
+          <div class="text-[11px] font-bold text-indigo-800">🔘 マーク部分</div>
+          <div class="grid grid-cols-3 gap-1.5">
+            <div><label class="text-[10px]">問数</label><input id="fu_nq" type="number" min="0" max="100" value="10" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[10px]">列数</label><input id="fu_cols" type="number" min="1" max="8" value="2" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[10px]">選択肢</label><input id="fu_nc" type="number" min="2" max="10" value="5" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[10px]">表記</label><select id="fu_ls" class="w-full px-1 py-0.5 border rounded text-xs"><option value="num">1,2,3…</option><option value="zero">1〜9,0</option><option value="abc">A,B,C…</option><option value="kana">ア,イ,ウ…</option></select></div>
+            <div><label class="text-[10px]">区切り行</label><input id="fu_grp" type="number" min="1" max="50" value="5" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[10px]">丸幅</label><input id="fu_bw" type="number" step="0.1" value="3.2" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[10px]">丸高</label><input id="fu_bh" type="number" step="0.1" value="4.4" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[10px]">選択肢間隔</label><input id="fu_px" type="number" step="0.5" value="8" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[10px]">行間隔</label><input id="fu_py" type="number" step="0.5" value="6.8" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[10px]">番号幅</label><input id="fu_nw" type="number" step="0.5" value="7" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[10px]">番号間隔</label><input id="fu_ng" type="number" step="0.1" value="1.4" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[10px]">数字高</label><input id="fu_lh" type="number" step="0.1" value="1" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+          </div>
+        </div>
+        <div class="bg-purple-50 border-2 border-purple-300 rounded p-2 space-y-1.5">
+          <div class="text-[11px] font-bold text-purple-800">🎯 マーク領域（ドラッグ／右下でリサイズ）</div>
+          <div class="grid grid-cols-3 gap-1.5">
+            <div><label class="text-[10px]">X(mm)</label><input id="fu_zone_x" type="number" step="0.5" value="20" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[10px]">Y(mm)</label><input id="fu_zone_y" type="number" step="0.5" value="44" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[10px]">幅(mm)</label><input id="fu_zone_w" type="number" step="0.5" value="170" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+          </div>
+          <button id="btn_fu_zone_center" class="w-full py-1 bg-white hover:bg-purple-100 border border-purple-300 text-purple-800 font-bold text-[11px] rounded">上部中央に配置</button>
+        </div>
+
+        <div class="bg-sky-50 border-2 border-sky-300 rounded p-2 space-y-1.5">
+          <div class="text-[11px] font-bold text-sky-800">📐 レイアウト微調整（見出し・タイトル・氏名・ID）</div>
+          <div>
+            <label class="text-[10px] text-slate-500">マーク欄の見出し</label>
+            <input id="fu_mark_title" type="text" class="w-full px-1 py-0.5 border rounded text-xs" placeholder="大問1">
+          </div>
+          <div class="flex gap-2 text-[11px]">
+            <label class="flex items-center gap-1"><input id="fu_mark_show_header" type="checkbox" checked> 見出しを表示</label>
+            <label class="flex items-center gap-1"><input id="fu_mark_show_boxes" type="checkbox"> 各問を枠で囲む</label>
+          </div>
+          <div class="grid grid-cols-2 gap-1">
+            <div><label class="text-[9px]">見出しX(mm)</label><input id="fu_mark_header_x" type="number" step="0.5" class="w-full px-1 py-0.5 border rounded text-xs" placeholder="自動"></div>
+            <div><label class="text-[9px]">見出しY(mm)</label><input id="fu_mark_header_y" type="number" step="0.5" class="w-full px-1 py-0.5 border rounded text-xs" placeholder="自動"></div>
+          </div>
+          <button id="btn_fu_mark_header_reset" class="w-full py-1 bg-white hover:bg-sky-100 border border-sky-300 text-sky-800 font-bold text-[10px] rounded">↺ マーク見出し位置を自動に戻す</button>
+
+          <div class="text-[10px] font-bold text-rose-700 mt-1">▼ ID欄：組列・番号列の位置（ドラッグでも可）</div>
+          <div class="grid grid-cols-4 gap-1">
+            <div><label class="text-[9px] text-rose-700">組列X</label><input id="fu_idGroupX" type="number" step="0.5" class="w-full px-1 py-0.5 border rounded text-xs border-rose-400"></div>
+            <div><label class="text-[9px] text-rose-700">組列Y</label><input id="fu_idGroupY" type="number" step="0.5" class="w-full px-1 py-0.5 border rounded text-xs border-rose-400"></div>
+            <div><label class="text-[9px] text-rose-700">番号列X</label><input id="fu_idNumX" type="number" step="0.5" class="w-full px-1 py-0.5 border rounded text-xs border-rose-400"></div>
+            <div><label class="text-[9px] text-rose-700">番号列Y</label><input id="fu_idNumY" type="number" step="0.5" class="w-full px-1 py-0.5 border rounded text-xs border-rose-400"></div>
+          </div>
+          <button id="btn_fu_id_offsets_reset" class="w-full py-1 bg-white hover:bg-rose-100 border border-rose-300 text-rose-800 font-bold text-[10px] rounded">↺ ID欄の組列・番号列位置をリセット</button>
+
+          <div class="grid grid-cols-4 gap-1">
+            <div><label class="text-[9px]">タイトルX</label><input id="fu_tnX" type="number" step="0.5" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[9px]">タイトルY</label><input id="fu_tnY" type="number" step="0.5" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[9px]">タイトル文字</label><input id="fu_tnS" type="number" step="0.1" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[9px]">ID Y</label><input id="fu_idY" type="number" step="0.5" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[9px]">氏名X</label><input id="fu_nmX" type="number" step="0.5" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[9px]">氏名Y</label><input id="fu_nmY" type="number" step="0.5" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[9px]">氏名幅</label><input id="fu_nmW" type="number" step="0.5" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[9px]">氏名高</label><input id="fu_nmH" type="number" step="0.5" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[9px]">ID幅</label><input id="fu_iw" type="number" step="0.1" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[9px]">ID高</label><input id="fu_ih" type="number" step="0.1" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[9px]">ID間隔</label><input id="fu_ix" type="number" step="0.1" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[9px]">ID数字高</label><input id="fu_idl" type="number" step="0.1" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[9px]">組/番号 X調整</label><input id="fu_idLabelX" type="number" step="0.5" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[9px]">組/番号 Y調整</label><input id="fu_idLabelY" type="number" step="0.5" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+            <div><label class="text-[9px]">組/番号 文字</label><input id="fu_idLabelS" type="number" step="0.1" class="w-full px-1 py-0.5 border rounded text-xs"></div>
+          </div>
+        </div>
+
+        <div class="bg-emerald-50 border-2 border-emerald-300 rounded p-2 space-y-1.5">
+          <div class="text-[11px] font-bold text-emerald-800 flex justify-between items-center">
+            <span>✍️ 記述大問</span>
+            <button id="btn_fu_add_desc" class="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-600 text-white hover:bg-emerald-700">＋ 追加</button>
+          </div>
+
+          <label class="flex items-center gap-1 text-[11px] bg-amber-100 border border-amber-300 rounded px-2 py-1 cursor-pointer">
+            <input id="fu_desc_manual" type="checkbox" checked>
+            <span class="font-bold text-amber-800">🎯 手動配置モード（ヘッダー=大問移動 / 設問=個別移動）</span>
+          </label>
+
+          <div class="grid grid-cols-2 gap-1.5">
+            <div>
+              <label class="text-[10px] text-slate-500">配置</label>
+              <select id="fu_desc_position" class="w-full px-1 py-0.5 border rounded text-xs">
+                <option value="auto" selected>自動（上下で広い方）</option>
+                <option value="below">マークの下</option>
+                <option value="above">マークの上</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-[10px] text-slate-500">段組</label>
+              <select id="fu_page_cols" class="w-full px-1 py-0.5 border rounded text-xs">
+                <option value="1">1段</option>
+                <option value="2">2段</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label class="text-[10px] text-slate-500">段間隔(mm)（1段目と2段目の間）</label>
+            <input id="fu_col_gap_mm" type="number" step="0.5" min="0" max="50" class="w-full px-1 py-0.5 border rounded text-xs">
+          </div>
+
+          <div class="grid grid-cols-2 gap-1.5">
+            <div>
+              <label class="text-[10px] text-slate-500">セクション間隔(mm)</label>
+              <input id="fu_desc_sec_gap_mm" type="number" step="0.1" min="0" max="30" value="2.6" class="w-full px-1 py-0.5 border rounded text-xs">
+            </div>
+            <div>
+              <label class="text-[10px] text-slate-500">行間隔(mm)</label>
+              <input id="fu_desc_row_gap_mm" type="number" step="0.1" min="0" max="20" value="1.6" class="w-full px-1 py-0.5 border rounded text-xs">
+            </div>
+          </div>
+          <div>
+            <label class="text-[10px] text-slate-500">強制スケール(%)：0=自動</label>
+            <input id="fu_desc_forced_scale" type="number" step="5" min="0" max="200" value="0" class="w-full px-1 py-0.5 border rounded text-xs">
+          </div>
+
+          <div class="flex gap-1">
+            <button id="btn_desc_reset_positions" class="flex-1 py-1 bg-white hover:bg-amber-100 border border-amber-300 text-amber-800 font-bold text-[11px] rounded">↺ 位置を自動レイアウトに戻す</button>
+          </div>
+
+          <div id="fu_desc_list" class="space-y-1"></div>
+        </div>
+      </div>
+
+      <div class="border-t border-slate-200 pt-3 space-y-2">
+        <div>
+          <label class="block text-xs font-bold text-slate-700 mb-1">テスト名</label>
+          <input id="tn" type="text" class="w-full text-xs px-2 py-1.5 rounded border border-slate-300">
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-700 mb-1">印刷カラー</label>
+          <select id="color_mode" class="w-full text-xs px-2 py-1.5 rounded border border-slate-300">
+            <option value="color_cyan">シアンブルー（推奨）</option>
+            <option value="color_orange">朱色オレンジ</option>
+            <option value="bw">白黒</option>
+          </select>
+        </div>
+        <div class="flex flex-wrap items-center gap-3 text-xs">
+          <label class="flex items-center gap-1"><input id="chk_id" type="checkbox" checked> ID欄</label>
+          <label class="flex items-center gap-1"><input id="chk_nm" type="checkbox" checked> 氏名欄</label>
+          <label class="flex items-center gap-1"><input id="chk_six" type="checkbox" checked> 6点マーカー</label>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div><label class="block text-[11px] font-bold text-slate-700 mb-1">用紙（命令文用）</label><select id="page_size" class="w-full text-xs px-2 py-1 rounded border"></select></div>
+          <div><label class="block text-[11px] font-bold text-slate-700 mb-1">段組（命令文用）</label><select id="page_cols" class="w-full text-xs px-2 py-1 rounded border"><option value="1">1段</option><option value="2">2段</option></select></div>
+        </div>
+      </div>
+
+      <div id="warnings" class="text-xs font-bold text-rose-600 bg-rose-50 border border-rose-200 rounded p-2 hidden"></div>
+      <button id="btn_apply" class="w-full py-2 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs rounded">✨ 用紙を生成 / 更新</button>
+
+      <div class="border-t border-slate-200 pt-3">
+        <button id="btn_open_answer_editor" class="w-full py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded">📋 全設問の正答を設定・編集</button>
+      </div>
+
+      <div class="border-t border-slate-200 pt-3 space-y-2">
+        <button id="btn_pdf" class="w-full py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded">🖨️ PDF保存</button>
+        <button id="btn_png" class="w-full py-2 bg-slate-700 hover:bg-slate-800 text-white font-bold text-xs rounded">🖼️ PNG保存</button>
+      </div>
+      <div class="border-t border-slate-200 pt-3 space-y-2">
+        <button id="btn_omr" class="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded">📐 OMR用 manifest</button>
+        <button id="btn_desc" class="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded">📐 記述用 manifest</button>
+        <button id="btn_both" class="w-full py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded">📦 2つ同時</button>
+        <button id="btn_key" class="w-full py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded">📋 answer_key.csv 出力</button>
+      </div>
+      <div class="border-t border-slate-200 pt-3 space-y-2">
+        <button id="btn_export_state" class="w-full py-2 bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs rounded">💾 作業状態を保存 (JSON)</button>
+        <button id="btn_import_state" class="w-full py-2 bg-sky-700 hover:bg-sky-800 text-white font-bold text-xs rounded">📂 作業状態を読込 (JSON)</button>
+        <input id="state_file_input" type="file" accept=".json" class="hidden">
+      </div>
+      <div id="log" class="text-[11px] text-slate-500 bg-slate-50 rounded p-2 font-mono hidden"></div>
+    </div>
+  </aside>
+
+  <section class="col-span-8 bg-white rounded-xl border border-slate-200 p-3">
+    <div class="canvas-wrap">
+      <canvas id="preview" width="2100" height="2970" class="draggable"></canvas>
+    </div>
+  </section>
+</main>
+
+<div id="answer_editor_modal" class="hidden fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4">
+  <div class="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col">
+    <div class="px-4 py-2 border-b bg-slate-50 flex justify-between items-center">
+      <h2 class="text-sm font-bold">📋 全設問の正答を設定</h2>
+      <div class="flex gap-2">
+        <button id="btn_ans_export" class="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded">💾 answer_key.csv</button>
+        <button id="btn_ans_close" class="px-3 py-1 bg-slate-200 text-slate-700 text-xs font-bold rounded">✕</button>
+      </div>
+    </div>
+    <div class="px-4 py-2 border-b bg-slate-50 flex flex-wrap gap-2 items-center text-[11px]">
+      <span class="font-bold text-slate-700">一括:</span>
+      <select id="bulk_score" class="px-1 py-0.5 border rounded">
+        <option value="">配点を</option>
+        <option value="1">1点</option><option value="2">2点</option><option value="3">3点</option>
+        <option value="4">4点</option><option value="5">5点</option><option value="10">10点</option>
+      </select>
+      <button id="btn_bulk_score" class="px-2 py-0.5 bg-slate-600 text-white rounded font-bold">適用</button>
+      <span class="text-slate-300">|</span>
+      <select id="bulk_mode" class="px-1 py-0.5 border rounded">
+        <option value="">採点形式を</option>
+        <option value="通常">通常</option>
+        <option value="完全一致">完全一致</option>
+        <option value="順不同">順不同</option>
+        <option value="順不同部分点">順不同部分点</option>
+        <option value="部分点">部分点</option>
+        <option value="手採点">手採点</option>
+      </select>
+      <button id="btn_bulk_mode" class="px-2 py-0.5 bg-slate-600 text-white rounded font-bold">適用</button>
+      <span class="text-slate-300">|</span>
+      <label class="font-bold cursor-pointer px-2 py-0.5 bg-blue-600 text-white rounded">
+        📥 CSV読込
+        <input type="file" id="ans_csv_input" accept=".csv,.txt" class="hidden">
+      </label>
+      <button id="btn_ans_template" class="px-2 py-0.5 bg-amber-600 text-white rounded font-bold">💾 テンプレートCSV</button>
+    </div>
+    <div class="overflow-auto flex-1">
+      <table class="w-full text-xs border-collapse">
+        <thead class="bg-slate-100 sticky top-0 z-10">
+          <tr>
+            <th class="px-1 py-1 text-left w-12 border-b">問</th>
+            <th class="px-1 py-1 text-left w-16 border-b">種別</th>
+            <th class="px-1 py-1 text-center w-14 border-b">配点</th>
+            <th class="px-1 py-1 text-left w-24 border-b">採点形式</th>
+            <th class="px-1 py-1 text-left border-b">正解</th>
+          </tr>
+        </thead>
+        <tbody id="answer_editor_body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// 定数
+// ============================================================
+const PAGE_SIZES = { a4_p:[2100,2970], a4_l:[2970,2100], a3_p:[2970,4200], a3_l:[4200,2970] };
+const PAGE_SIZE_LABELS = { a4_p:"A4 縦", a4_l:"A4 横", a3_p:"A3 縦", a3_l:"A3 横" };
+const DEFAULT_COMMAND = `大問1 マーク 10問 5択 1点\n大問2 英単語 8問 3点\n大問3 短文 4問 4点\n大問4 長文英作文 1問 10点 3行`;
+const PRESET_COMMANDS = {
+  "定期テスト標準": DEFAULT_COMMAND,
+  "穴埋め＋訂正＋記述": `大問1 穴埋め 5問 3空欄 2点\n大問2 訂正 5問 2点\n大問3 英単語 8問 3点\n大問4 短文 4問 4点`,
+  "記号は手書き": `大問1 記号 10問 2点\n大問2 英単語 8問 3点\n大問3 短文 4問 4点`,
+  "小テスト": `大問1 英単語 12問 5点\n大問2 短文 4問 10点`,
+  "マークのみ": `大問1 マーク 40問 5択 2点 2列`,
+};
+const TYPE_LABELS = { mark:"マーク", symbol:"記号", word:"英単語", short:"短文", essay:"長文英作文", blank:"穴埋め", correct:"訂正" };
+const DEFAULT_COLS = { mark:2, symbol:5, word:3, short:1, essay:1, blank:1, correct:1 };
+const DEFAULT_SCORE = { mark:1, symbol:2, word:3, short:4, essay:10, blank:2, correct:2 };
+const DEFAULT_COL_GAP_MM = 6;
+function getColGapMm(cfg) {
+  const v = Number(cfg?.col_gap_mm);
+  return Number.isFinite(v) && v >= 0 ? v : DEFAULT_COL_GAP_MM;
+}
+
+// --- mm ⇔ px の一元変換（1mm = 10px）---
+const MM_TO_PX = 10;
+const mmToPx = mm => Number(mm) * MM_TO_PX;
+const pxToMm = px => Number(px) / MM_TO_PX;
+const roundMm = mm => Math.round(Number(mm) * 2) / 2;
+
+// --- HTML エスケープ ---
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+const COLOR_PALETTES = {
+  color_cyan: { box_outline:[20,128,196], label_bg:[236,246,253], label_sep:[80,160,212],
+    qno_text:[15,82,136], hdr_bg:[18,108,172], baseline:[115,192,236], mark_outline:[25,135,202] },
+  color_orange: { box_outline:[210,92,38], label_bg:[254,244,238], label_sep:[224,132,88],
+    qno_text:[156,58,18], hdr_bg:[194,78,28], baseline:[242,168,128], mark_outline:[215,98,45] },
+  bw: { box_outline:[0,0,0], label_bg:[246,246,244], label_sep:[90,90,90],
+    qno_text:[0,0,0], hdr_bg:[45,45,45], baseline:[175,175,175], mark_outline:[0,0,0] },
+};
+const OMR_COLOR_PALETTES = {
+  color_cyan: { bubble:[20,130,200], num_text:[15,88,145], box:[20,120,185], title:[0,0,0] },
+  color_orange: { bubble:[215,95,40], num_text:[165,62,20], box:[200,85,35], title:[0,0,0] },
+  bw: { bubble:[0,0,0], num_text:[0,0,0], box:[0,0,0], title:[0,0,0] },
+};
+
+const DEF_CFG = {
+  tn:"英語 定期考査 解答用紙", id:1, nm:1, baseline_style:"four_lines_word", tick_w:5,
+  color_mode:"color_cyan", six_markers:1,
+  mL:14, mR:14, mT:44, mB:13, idY:24.5, iw:2.6, ih:3.8, ix:4.6, idl:0.7,
+  idLabelX:0, idLabelY:0, idLabelS:2.6,
+  idGroupX:0, idGroupY:0, idNumX:0, idNumY:0,
+  tnX:14, tnY:11.5, tnS:4.2, nmX:14, nmY:14, nmW:143, nmH:8,
+  cmd: DEFAULT_COMMAND, page_size:"a4_p", page_cols:1,
+  col_gap_mm: 6,
+};
+
+const DEF_FUSION = {
+  page_size:"a4_p", color_mode:"color_cyan", six_markers:1, tn:"",
+  nq:10, cols:2, nc:5, ls:"num", grp:5,
+  bw:3.2, bh:4.4, px:8, py:6.8, nw:7, ng:1.4, lh:1,
+  zone_x:20, zone_y:44, zone_w:170,
+  id:1, nm:1,
+  idY:24.5, iw:2.6, ih:3.8, ix:4.6, idl:0.7,
+  idLabelX:0, idLabelY:0, idLabelS:2.6,
+  idGroupX:0, idGroupY:0, idNumX:0, idNumY:0,
+  tnX:14, tnY:11.5, tnS:4.2,
+  nmX:14, nmY:14, nmW:143, nmH:8,
+  desc_position: "auto",
+  desc_manual: true,
+  desc_sec_gap_mm: 2.6,
+  desc_row_gap_mm: 1.6,
+  desc_forced_scale: 0,
+  page_cols: 1,
+  col_gap_mm: 6,
+  mark_title: "大問1",
+  mark_show_header: true,
+  mark_show_boxes: false,
+  mark_header_x: null,
+  mark_header_y: null,
+  desc_sections: [
+    { title:"大問2 英単語", type:"word", count:8, score:3, cols:2, lines:1, blanks:1,
+      mx: null, my: null, mw: null, q_offsets: {} },
+    { title:"大問3 短文", type:"short", count:4, score:4, cols:1, lines:1, blanks:1,
+      mx: null, my: null, mw: null, q_offsets: {} },
+  ],
+};
+const LS_MAP = { zero:"1234567890", abc:"ABCDEFGHIJKL", kana:"アイウエオカキクケコサシ" };
+const GRADING_MODES = ["通常", "完全一致", "順不同", "順不同部分点", "部分点", "手採点"];
+const TYPE_LABEL_JA = TYPE_LABELS;
+
+const state = {
+  cfg: JSON.parse(JSON.stringify(DEF_CFG)),
+  fusionCfg: JSON.parse(JSON.stringify(DEF_FUSION)),
+  parsedKey: [],
+  answersMark: {},
+  answersDesc: {},
+  gradingModes: {},
+  customScores: {},
+  mode: "cmd",
+  cmdSubTab: "manual",
+};
+
+// --- Undo/Redo 履歴 ---
+const history = { stack: [], idx: -1, limit: 50 };
+function snapshotState() {
+  return JSON.stringify({ cfg: state.cfg, fusionCfg: state.fusionCfg });
+}
+function pushHistory() {
+  const snap = snapshotState();
+  if (history.stack[history.idx] === snap) return;
+  history.stack = history.stack.slice(0, history.idx + 1);
+  history.stack.push(snap);
+  if (history.stack.length > history.limit) history.stack.shift();
+  history.idx = history.stack.length - 1;
+}
+function undo() {
+  if (history.idx <= 0) { log("これ以上戻せません"); return; }
+  history.idx--;
+  const snap = JSON.parse(history.stack[history.idx]);
+  state.cfg = snap.cfg;
+  state.fusionCfg = snap.fusionCfg;
+  syncFusionUIFromState();
+  renderFusionDescList();
+  render();
+  log("元に戻しました (Ctrl+Z)");
+}
+function redo() {
+  if (history.idx >= history.stack.length - 1) { log("これ以上進めません"); return; }
+  history.idx++;
+  const snap = JSON.parse(history.stack[history.idx]);
+  state.cfg = snap.cfg;
+  state.fusionCfg = snap.fusionCfg;
+  syncFusionUIFromState();
+  renderFusionDescList();
+  render();
+  log("やり直しました (Ctrl+Shift+Z)");
+}
+
+// --- localStorage 自動保存 ---
+const STORAGE_KEY = "answersheet_state_v2";
+function autoSave() {
+  try {
+    localStorage.setItem(STORAGE_KEY, snapshotState());
+  } catch (e) {}
+}
+function autoLoad() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return false;
+    const o = JSON.parse(raw);
+    if (o.cfg) state.cfg = { ...JSON.parse(JSON.stringify(DEF_CFG)), ...o.cfg };
+    if (o.fusionCfg) state.fusionCfg = { ...JSON.parse(JSON.stringify(DEF_FUSION)), ...o.fusionCfg };
+    return true;
+  } catch (e) { return false; }
+}
+
+// ============================================================
+// ユーティリティ
+// ============================================================
+const nfkc = s => String(s || "").normalize("NFKC");
+const SEC_SPLIT = /[／/；;]|(?=大問\s*\d+)|(?=第\s*\d+\s*問)|(?=Part\s*\d+)/i;
+const TITLE_RE = /(大問\s*\d+|第\s*\d+\s*問|Part\s*\d+|[ⅠⅡⅢⅣⅤⅥⅦⅧ])/i;
+function log(msg) { const el = document.getElementById("log"); el.classList.remove("hidden"); el.textContent = msg; }
+async function sha256Hex(str) {
+  const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+  return "sha256:" + Array.from(new Uint8Array(h)).map(b => b.toString(16).padStart(2,"0")).join("");
+}
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function(x,y,w,h,r) {
+    this.beginPath(); this.moveTo(x+r,y);
+    this.arcTo(x+w,y,x+w,y+h,r); this.arcTo(x+w,y+h,x,y+h,r);
+    this.arcTo(x,y+h,x,y,r); this.arcTo(x,y,x+w,y,r); this.closePath(); return this;
+  };
+}
+function drawMarkers(ctx, W, H, six) {
+  const MK = [[60,60],[W-60,60],[W-60,H-60],[60,H-60]];
+  const MK_MID = [[60,H/2],[W-60,H/2]];
+  const markers = six ? MK.concat(MK_MID) : MK;
+  ctx.fillStyle = "#000";
+  for (const [mx,my] of markers) ctx.fillRect(mx-22, my-22, 44, 44);
+}
+function drawScoreBox(ctx, W) {
+  const mR = 140;
+  const sb = [W - mR - 360, 80, W - mR, 225];
+  ctx.strokeStyle = "#000"; ctx.lineWidth = 3;
+  ctx.strokeRect(sb[0], sb[1], sb[2]-sb[0], sb[3]-sb[1]);
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(sb[0]+95, sb[1]); ctx.lineTo(sb[0]+95, sb[3]); ctx.stroke();
+  ctx.fillStyle = "#000"; ctx.font = `bold 26px "Yu Gothic UI",sans-serif`;
+  ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+  ctx.fillText("得点", sb[0]+47, sb[1]+85);
+}
+
+// ============================================================
+// マーク座標系
+// ============================================================
+function getLQ(cfg) {
+  const nq = parseInt(cfg.nq), cols = Math.max(1, parseInt(cfg.cols));
+  const rows = Math.ceil(nq / cols);
+  const cp = mmToPx(cfg.zone_w) / cols;
+  const pos = (q) => {
+    const col = Math.floor(q / rows), r = q % rows;
+    const x = mmToPx(cfg.zone_x) + col * cp + mmToPx(cfg.nw);
+    const y = mmToPx(cfg.zone_y) + r * mmToPx(cfg.py) + Math.floor(r / cfg.grp) * mmToPx(2.5);
+    return [x, y];
+  };
+  return { rows, cp, pos };
+}
+function getLabMark(cfg) {
+  const nc = parseInt(cfg.nc);
+  if (cfg.ls === "num") return Array.from({length: nc}, (_,i) => String(i+1));
+  return (LS_MAP[cfg.ls] || LS_MAP.zero).slice(0, nc).split("");
+}
+
+// ★手動オフセットを反映したID行座標
+function getIdfMark(cfg) {
+  const W = PAGE_SIZES[cfg.page_size]?.[0] || 2100;
+  const idY = Number(cfg.idY ?? 24.5);
+  const ih = Number(cfg.ih ?? 3.8);
+  const y = mmToPx(idY);
+  const ih10 = mmToPx(ih);
+  const groupColX = Math.round(W * 0.229);
+  const numColX = Math.round(W * 0.505);
+  const gx = mmToPx(Number(cfg.idGroupX ?? 0));
+  const gy = mmToPx(Number(cfg.idGroupY ?? 0));
+  const nx = mmToPx(Number(cfg.idNumX ?? 0));
+  const ny = mmToPx(Number(cfg.idNumY ?? 0));
+  return [
+    ["組10", groupColX + gx, y + gy, 10],
+    ["組1",  groupColX + gx, y + ih10 + mmToPx(3.8) + gy, 10],
+    ["番号10", numColX + nx, y + ny, 10],
+    ["番号1",  numColX + nx, y + ih10 + mmToPx(3.8) + ny, 10],
+  ];
+}
+const get_idf = getIdfMark;
+
+function computeMarkZoneHeight(cfg) {
+  if (cfg.nq <= 0) return mmToPx(cfg.lh) + mmToPx(2);
+  const cols = Math.max(1, parseInt(cfg.cols));
+  const rows = Math.ceil(cfg.nq / cols);
+  const lastY = (rows-1) * mmToPx(cfg.py) + Math.floor((rows-1) / cfg.grp) * mmToPx(2.5);
+  return lastY + mmToPx(cfg.bh) + mmToPx(cfg.lh) + mmToPx(2);
+}
+
+// マーク見出しバーの矩形
+function computeMarkHeaderRect(cfg, zone) {
+  const headerH = mmToPx(6);
+  let headerX = zone.x;
+  let headerY = zone.y - headerH - mmToPx(1);
+  if (cfg.id && cfg.mark_header_y == null) {
+    const idBottom = mmToPx(Number(cfg.idY ?? 24.5))
+                   + 2 * mmToPx(Number(cfg.ih ?? 3.8))
+                   + mmToPx(3.8);
+    if (headerY < idBottom + mmToPx(1)) headerY = idBottom + mmToPx(1);
+  }
+  if (cfg.mark_header_x != null && Number.isFinite(Number(cfg.mark_header_x))) {
+    headerX = mmToPx(Number(cfg.mark_header_x));
+  }
+  if (cfg.mark_header_y != null && Number.isFinite(Number(cfg.mark_header_y))) {
+    headerY = mmToPx(Number(cfg.mark_header_y));
+  }
+  return { x: headerX, y: headerY, w: mmToPx(26), h: headerH };
+}
+
+// ============================================================
+// パーサー
+// ============================================================
+function detectSectionType(t) {
+  const tl = t.toLowerCase();
+  if (["訂正","誤文","誤りを直","correct"].some(w => tl.includes(w))) return "correct";
+  if (["穴埋め","空欄補充","空所補充","空欄","blank"].some(w => tl.includes(w))) return "blank";
+  if (["マーク","塗り","omr","mark"].some(w => tl.includes(w))) return "mark";
+  if (["長文","英作","自由","手採点","essay"].some(w => tl.includes(w))) return "essay";
+  if (["短文","一文","並び替","整序","英文","short"].some(w => tl.includes(w))) return "short";
+  if (["記号","選択","リスニング","小枠","symbol"].some(w => tl.includes(w))) return "symbol";
+  if (["単語","熟語","連語","適語","中枠","word"].some(w => tl.includes(w))) return "word";
+  return "word";
+}
+function parseLayoutCommand(cmdText) {
+  const text = nfkc(cmdText || "");
+  const chunks = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    for (const sp of line.split(SEC_SPLIT)) if (sp && sp.trim()) chunks.push(sp.trim());
+  }
+  const sections = [];
+  for (const chunk of chunks) {
+    const m_sec = chunk.match(TITLE_RE);
+    let title, rest;
+    if (m_sec) { title = m_sec[1].replace(/\s+/g,""); rest = chunk.slice(0, m_sec.index) + " " + chunk.slice(m_sec.index + m_sec[0].length); }
+    else { title = `大問${sections.length+1}`; rest = chunk; }
+    const q_type = detectSectionType(rest);
+    let count = 5;
+    const m_cnt = rest.match(/(\d+)\s*(?:問|個|題)/);
+    if (m_cnt) count = Math.max(1, Math.min(100, parseInt(m_cnt[1])));
+    let score = DEFAULT_SCORE[q_type] || 2;
+    const m_sc = rest.match(/(?:各|配点)?\s*(\d+(?:\.\d+)?)\s*点/);
+    if (m_sc) score = parseFloat(m_sc[1]);
+    let lines = q_type === "essay" ? 3 : 1;
+    const m_ln = rest.match(/(\d+)\s*行/);
+    if (m_ln) lines = Math.max(1, Math.min(10, parseInt(m_ln[1])));
+    const m_col = rest.match(/(\d+)\s*列/);
+    const cols = m_col ? Math.max(1, Math.min(8, parseInt(m_col[1]))) : (DEFAULT_COLS[q_type] || 2);
+    let chars = 0;
+    const m_chars = rest.match(/(\d+)\s*(?:文字|字|マス)/);
+    if (m_chars) chars = Math.max(1, Math.min(40, parseInt(m_chars[1])));
+    let choices = 5;
+    const m_ch = rest.match(/(\d+)\s*択/);
+    if (m_ch) choices = Math.max(2, Math.min(10, parseInt(m_ch[1])));
+    let ls = "num";
+    if (/ABC|アルファベット/i.test(rest)) ls = "abc";
+    else if (/カタカナ|カナ|かな|アイウ/.test(rest)) ls = "kana";
+    if (ls === "num" || ls === "zero") choices = Math.min(choices, 10);
+    let blanks = 1;
+    if (q_type === "blank") {
+      const m_bl = rest.match(/(\d+)\s*(?:空欄|カ所|箇所|個所)/);
+      if (m_bl) blanks = Math.max(1, Math.min(10, parseInt(m_bl[1])));
+    }
+    sections.push({ title, type:q_type, count, score, cols, lines, choices, ls, chars, blanks });
+  }
+  return sections.length ? sections : parseLayoutCommand(DEFAULT_COMMAND);
+}
+function choiceLabels(ls, n) {
+  if (ls === "abc") return "ABCDEFGHIJ".slice(0, n).split("");
+  if (ls === "kana") return "アイウエオカキクケコ".slice(0, n).split("");
+  if (ls === "zero") return "1234567890".slice(0, n).split("");
+  return Array.from({length:n}, (_,i) => String(i+1));
+}
+function markBubbles(qb) {
+  const n = qb.choices;
+  const { write_x:wx, write_y:wy, write_w:ww, write_h:wh } = qb;
+  const bh = Math.min(44, wh*0.52), bw = Math.min(32, bh*0.74);
+  const step = n > 1 ? Math.min(120, (ww-28-bw)/(n-1)) : 0;
+  const total = (n-1)*step + bw;
+  const x0 = wx + (ww-total)/2, y0 = wy + wh - bh - wh*0.12;
+  return Array.from({length:n}, (_,i) => [x0+i*step, y0, bw, bh]);
+}
+
+// ============================================================
+// 命令文モードのレイアウト
+// ============================================================
+function computeLayoutBoxes(cfg) {
+  const [W,H] = PAGE_SIZES[cfg.page_size] || PAGE_SIZES.a4_p;
+  const sections = cfg.sections || parseLayoutCommand(cfg.cmd);
+  const page_cols = Math.max(1, Math.min(2, cfg.page_cols || 1));
+  const mL = mmToPx(cfg.mL), mR = mmToPx(cfg.mR), mT = mmToPx(cfg.mT), mB = mmToPx(cfg.mB);
+  const usable_w = W - mL - mR, usable_h = H - mT - mB;
+  const col_gap = mmToPx(getColGapMm(cfg));
+  let col_widths, col_x_starts;
+  if (page_cols === 1) { col_widths = [usable_w]; col_x_starts = [mL]; }
+  else { const cw = (usable_w - col_gap)/2; col_widths = [cw,cw]; col_x_starts = [mL, mL+cw+col_gap]; }
+  const base_box_h = { mark:74, symbol:95, word:118, short:135, essay:100, blank:105, correct:110 };
+  const sec_hdr_h = 42, sec_gap_h = 26, row_gap_h = 16;
+  function sec_dims(sec) {
+    const t = sec.type || "word";
+    const cnt = Math.max(1, sec.count || 1);
+    const cols = Math.max(1, sec.cols || DEFAULT_COLS[t] || 2);
+    const lines = Math.max(1, sec.lines || (t === "essay" ? 3 : 1));
+    const rows = Math.ceil(cnt / cols);
+    let bh;
+    if (t === "essay") bh = base_box_h.essay*lines+24;
+    else bh = base_box_h[t] || 115;
+    return { t, cnt, cols, lines, rows, bh };
+  }
+  const sec_heights = sections.map((sec,i) => {
+    const d = sec_dims(sec);
+    let h = sec_hdr_h + d.rows*d.bh + Math.max(0, d.rows-1)*row_gap_h;
+    if (i < sections.length-1) h += sec_gap_h;
+    return h;
+  });
+  let col_ranges, col_needed;
+  if (page_cols === 1) { col_ranges = [[0, sections.length]]; col_needed = [sec_heights.reduce((a,b) => a+b, 0)]; }
+  else {
+    let best = sections.length, best_max = sec_heights.reduce((a,b) => a+b, 0);
+    for (let s = 1; s <= sections.length; s++) {
+      const lh = sec_heights.slice(0,s).reduce((a,b) => a+b, 0);
+      const rh = sec_heights.slice(s).reduce((a,b) => a+b, 0);
+      const m = Math.max(lh, rh);
+      if (m < best_max) { best_max = m; best = s; }
+    }
+    col_ranges = [[0,best],[best,sections.length]];
+    col_needed = [sec_heights.slice(0,best).reduce((a,b) => a+b, 0), sec_heights.slice(best).reduce((a,b) => a+b, 0)];
+  }
+  let scale = 1, warnings = [];
+  const needed = Math.max(...col_needed);
+  if (needed > usable_h) scale = usable_h / needed;
+  if (cfg.id && cfg.mT < cfg.idY + 2*cfg.ih + 6) warnings.push("上余白がID欄と重なります");
+  const questions = [], sec_headers = [];
+  let gq = 1;
+  for (let ci = 0; ci < col_ranges.length; ci++) {
+    const [start,end] = col_ranges[ci];
+    if (start >= end) continue;
+    const col_x = col_x_starts[ci], col_w = col_widths[ci];
+    let cur_y = mT;
+    for (let si = start; si < end; si++) {
+      const sec = sections[si];
+      const d = sec_dims(sec);
+      const score = sec.score ?? DEFAULT_SCORE[d.t] ?? 2;
+      const title = sec.title || `大問${si+1}`;
+      const sh_h = sec_hdr_h * scale;
+      sec_headers.push({ title, type_label: TYPE_LABELS[d.t] || d.t, x: col_x, y: cur_y, w: col_w, h: sh_h });
+      cur_y += sh_h;
+      const bh = d.bh * scale, r_gap = row_gap_h * scale;
+      const bw = (col_w - (d.cols-1)*18) / d.cols;
+      const label_w = d.cols > 1 ? Math.min(68, Math.max(44, bw*0.16)) : 68;
+      for (let i = 0; i < d.cnt; i++) {
+        const r = Math.floor(i/d.cols), c = i % d.cols;
+        const bx = col_x + c*(bw+18);
+        const by = cur_y + r*(bh+r_gap);
+        questions.push({
+          q: gq, sec_title: title, type: d.t, score,
+          choices: sec.choices ?? 5, ls: sec.ls ?? "num", chars: sec.chars ?? 0,
+          lines: d.lines, blanks: sec.blanks || 1,
+          x: bx, y: by, w: bw, h: bh, label_w,
+          write_x: bx+label_w, write_y: by, write_w: bw-label_w, write_h: bh,
+        });
+        gq++;
+      }
+      cur_y += d.rows*bh + Math.max(0,d.rows-1)*r_gap + sec_gap_h*scale;
+    }
+  }
+  return { questions, sec_headers, warnings, scale, nq: questions.length };
+}
+
+// ============================================================
+// 命令文モード描画
+// ============================================================
+function drawSheet(ctx, cfg, W, H) {
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
+  const pal = COLOR_PALETTES[cfg.color_mode] || COLOR_PALETTES.color_cyan;
+  const is_bw = cfg.color_mode === "bw";
+  const base_col = pal.baseline;
+  const sub_col = base_col.map(c => Math.min(255, Math.floor(c*0.55+255*0.45)));
+  drawMarkers(ctx, W, H, cfg.six_markers);
+  const rgb = c => `rgb(${c[0]},${c[1]},${c[2]})`;
+  const text = (x,y,s,size,bold,color,align) => {
+    ctx.save(); ctx.fillStyle = rgb(color||[0,0,0]);
+    ctx.font = `${bold?"bold ":""}${size}px "Yu Gothic UI",sans-serif`;
+    ctx.textAlign = align||"left"; ctx.textBaseline = "alphabetic";
+    ctx.fillText(String(s), x, y); ctx.restore();
+  };
+  const capsule = (a,b,w,h,col) => {
+    ctx.save(); ctx.strokeStyle = rgb(col||pal.mark_outline); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(a,b,w,h,Math.min(w,h)/2.5); ctx.stroke(); ctx.restore();
+  };
+  const hline = (x0,x1,y,col,dashed) => {
+    ctx.save(); ctx.strokeStyle = rgb(col||base_col); ctx.lineWidth = (is_bw||dashed)?1:2;
+    if (is_bw||dashed) {
+      const st = is_bw?8:10, on = is_bw?3:5;
+      ctx.beginPath();
+      for (let sx = Math.floor(x0); sx < Math.floor(x1); sx += st) { ctx.moveTo(sx,y); ctx.lineTo(Math.min(sx+on, Math.floor(x1)), y); }
+      ctx.stroke();
+    } else { ctx.beginPath(); ctx.moveTo(x0,y); ctx.lineTo(x1,y); ctx.stroke(); }
+    ctx.restore();
+  };
+  const mL = mmToPx(cfg.mL), mR = mmToPx(cfg.mR);
+  text(mmToPx(cfg.tnX), mmToPx(cfg.tnY), cfg.tn, Math.max(14, Math.floor(mmToPx(cfg.tnS))), true, [0,0,0]);
+  drawScoreBox(ctx, W);
+  if (cfg.nm) {
+    const nx = mmToPx(cfg.nmX), ny = mmToPx(cfg.nmY), nw = mmToPx(cfg.nmW), nh = mmToPx(cfg.nmH);
+    ctx.strokeStyle = "#000"; ctx.lineWidth = 2; ctx.strokeRect(nx,ny,nw,nh);
+    ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(nx+110,ny); ctx.lineTo(nx+110,ny+nh); ctx.stroke();
+    text(nx+55, ny+nh*0.64, "氏名", 26, true, [0,0,0], "center");
+  }
+  if (cfg.id) {
+    const idY = mmToPx(cfg.idY), ih10 = mmToPx(cfg.ih), iw10 = mmToPx(cfg.iw), ix10 = mmToPx(cfg.ix), idl10 = mmToPx(cfg.idl);
+    const labelOffX = mmToPx(Number(cfg.idLabelX ?? 0));
+    const labelOffY = mmToPx(Number(cfg.idLabelY ?? 0));
+    const labelSize = Math.max(12, Math.floor(mmToPx(Number(cfg.idLabelS ?? 2.6))));
+    const idfArr = get_idf(cfg);
+    const groupX = idfArr[0][1];
+    const numX = idfArr[2][1];
+    const groupBaseY = idfArr[0][2] + ih10 + 18;
+    const numBaseY = idfArr[2][2] + ih10 + 18;
+    text(groupX - 40 + labelOffX, groupBaseY + labelOffY, "組", labelSize, true, [0,0,0]);
+    text(numX - 60 + labelOffX, numBaseY + labelOffY, "番号", labelSize, true, [0,0,0]);
+    for (const [_, a, b, m] of idfArr) {
+      for (let i = 0; i < m; i++) {
+        const bx = a + i*ix10;
+        capsule(bx, b, iw10, ih10, pal.mark_outline);
+        text(bx+iw10/2, b-idl10, "1234567890"[i], 18, false, pal.qno_text, "center");
+      }
+    }
+  }
+  const sep_y = mmToPx(cfg.mT) - 16;
+  ctx.strokeStyle = rgb(pal.box_outline); ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(mL, sep_y); ctx.lineTo(W-mR, sep_y); ctx.stroke();
+  const layout = computeLayoutBoxes(cfg);
+  const scale = layout.scale;
+  const f_sec = Math.max(15, Math.floor(22*scale)), f_qno = Math.max(13, Math.floor(20*scale));
+  const f_rub = Math.max(11, Math.floor(15*scale)), f_lab = Math.max(11, Math.floor(17*scale));
+  for (const sh of layout.sec_headers) {
+    const hy = sh.y+4, hh = Math.max(24, sh.h-8);
+    ctx.fillStyle = rgb(pal.hdr_bg); ctx.fillRect(sh.x, hy, 130, hh);
+    text(sh.x+65, hy+hh*0.72, sh.title, f_sec, true, [255,255,255], "center");
+    text(sh.x+145, hy+hh*0.72, `【${sh.type_label}】`, f_rub, false, pal.qno_text);
+  }
+  const b_style = cfg.baseline_style || "four_lines_word";
+  function draw4lines(x0,x1,t,m,b,d) { hline(x0,x1,t,sub_col,true); hline(x0,x1,m,sub_col,true); hline(x0,x1,b,base_col,false); hline(x0,x1,d,sub_col,true); }
+  for (const qb of layout.questions) {
+    const { x:bx, y:by, w:bw, h:bh, label_w:lw, write_x:wx, write_w:ww, type:t } = qb;
+    ctx.strokeStyle = rgb(pal.box_outline); ctx.lineWidth = 2;
+    ctx.strokeRect(bx, by, bw, bh);
+    ctx.fillStyle = rgb(pal.label_bg); ctx.fillRect(bx+2, by+2, lw-3, bh-4);
+    ctx.strokeStyle = rgb(pal.label_sep); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(bx+lw, by); ctx.lineTo(bx+lw, by+bh); ctx.stroke();
+    text(bx+lw/2, by+bh*(t==="mark"?0.66:0.58), `問${qb.q}`, f_qno, true, pal.qno_text, "center");
+    if (t === "mark") {
+      const labs = choiceLabels(qb.ls, qb.choices);
+      markBubbles(qb).forEach((b, i) => { capsule(b[0],b[1],b[2],b[3],pal.mark_outline); text(b[0]+b[2]/2, b[1]-5, labs[i], f_lab, false, pal.qno_text, "center"); });
+    } else if (t === "blank") {
+      const slots = qb.blanks || 1;
+      const slotGap = 8;
+      const minSlotW = 40;
+      const slotW = Math.max(minSlotW, (ww - slotGap*(slots-1)) / slots);
+      const totalW = slotW * slots + slotGap * (slots - 1);
+      if (totalW > ww) {
+        ctx.save(); ctx.strokeStyle = "rgba(220,38,38,0.5)"; ctx.setLineDash([6,4]); ctx.lineWidth = 1;
+        ctx.strokeRect(wx-2, by+4, ww+4, bh-8); ctx.restore();
+      }
+      for (let k = 0; k < slots; k++) {
+        const sx = wx + k*(slotW+slotGap);
+        ctx.strokeStyle = rgb(pal.label_sep); ctx.lineWidth = 1;
+        ctx.strokeRect(sx, by+6, Math.min(slotW, ww-(sx-wx)), bh-12);
+        text(sx + slotW/2, by + 24, `(${k+1})`, Math.min(15, f_rub+2), false, pal.qno_text, "center");
+        const baseY = by + bh*0.73;
+        hline(sx+8, sx+slotW-8, baseY, base_col, false);
+      }
+    } else if (t === "correct") {
+      const symW = Math.max(55, ww * 0.22);
+      const corW = ww - symW - 8;
+      ctx.strokeStyle = rgb(pal.label_sep); ctx.lineWidth = 2;
+      ctx.strokeRect(wx, by+6, symW, bh-12);
+      text(wx + symW/2, by + 24, "記号", f_rub, false, pal.qno_text, "center");
+      hline(wx+8, wx+symW-8, by + bh*0.73, base_col, false);
+      ctx.strokeRect(wx+symW+8, by+6, corW, bh-12);
+      text(wx+symW+8 + corW/2, by + 24, "訂正", f_rub, false, pal.qno_text, "center");
+      hline(wx+symW+16, wx+symW+corW-8, by + bh*0.73, base_col, false);
+    } else if (t === "word" || t === "short") {
+      const top_y = by+bh*0.22, mid_y = by+bh*0.47, base_y = by+bh*0.73, desc_y = by+bh*0.90;
+      const x0 = wx+16, x1 = wx+ww-16;
+      if (b_style === "four_lines_word" || b_style === "four_lines") draw4lines(x0, x1, top_y, mid_y, base_y, desc_y);
+      else hline(x0, x1, base_y, base_col, b_style === "dotted");
+    } else if (t === "symbol") {
+      const gw = Math.min(ww*0.56, bh*0.72), gh = bh*0.68;
+      const gx0 = wx+(ww-gw)/2, gy0 = by+(bh-gh)/2;
+      const gx1 = gx0+gw, gy1 = gy0+gh, cl = Math.min(12, gw*0.22);
+      ctx.strokeStyle = rgb(sub_col); ctx.lineWidth = is_bw?1:2;
+      for (const [cxa,cya,dxs,dys] of [[gx0,gy0,1,1],[gx1,gy0,-1,1],[gx0,gy1,1,-1],[gx1,gy1,-1,-1]]) {
+        ctx.beginPath(); ctx.moveTo(cxa,cya); ctx.lineTo(cxa+dxs*cl,cya);
+        ctx.moveTo(cxa,cya); ctx.lineTo(cxa,cya+dys*cl); ctx.stroke();
+      }
+    } else if (t === "essay") {
+      text(bx+bw-12, by+22, `[英作文/${qb.score}点]`, f_rub, false, base_col, "right");
+      const tp = 18*scale, step = (bh-tp-12*scale)/Math.max(1, qb.lines);
+      for (let k = 1; k <= qb.lines; k++) {
+        const ly = by+tp+k*step-6*scale;
+        if (b_style === "four_lines_word" || b_style === "four_lines") draw4lines(wx+18, bx+bw-18, ly-step*0.58, ly-step*0.30, ly, ly+step*0.16);
+        else hline(wx+18, bx+bw-18, ly);
+      }
+    }
+  }
+}
+
+// ============================================================
+// 融合モードのレイアウト
+// ============================================================
+function computeDescYRange(zoneRect, top, bottom, pos) {
+  const spaceAbove = zoneRect.y - top;
+  const spaceBelow = bottom - (zoneRect.y + zoneRect.h);
+  if (pos === "below") return { startY: zoneRect.y + zoneRect.h + 10, endY: bottom };
+  if (pos === "above") return { startY: top, endY: zoneRect.y - 10 };
+  if (spaceAbove >= spaceBelow && spaceAbove > 100) return { startY: top, endY: zoneRect.y - 10 };
+  return { startY: zoneRect.y + zoneRect.h + 10, endY: bottom };
+}
+
+function computeFusionLayout(cfg) {
+  const [W, H] = PAGE_SIZES[cfg.page_size];
+  const mL = mmToPx(14), mR = mmToPx(14), mT = mmToPx(44), mB = mmToPx(13);
+  const markH = computeMarkZoneHeight(cfg);
+  const zoneRect = { x: mmToPx(cfg.zone_x), y: mmToPx(cfg.zone_y), w: mmToPx(cfg.zone_w), h: markH };
+  const pageCols = Math.max(1, Math.min(2, cfg.page_cols || 1));
+  const colGap = mmToPx(getColGapMm(cfg));
+  const usableW = W - mL - mR;
+  const colW = pageCols === 2 ? (usableW - colGap) / 2 : usableW;
+  const leftColX = mL;
+  const rightColX = mL + colW + colGap;
+
+  let columnBounds;
+  if (pageCols === 1) {
+    const range = computeDescYRange(zoneRect, mT, H - mB, cfg.desc_position || "auto");
+    columnBounds = [{ left: mL, right: W - mR, startY: range.startY, endY: range.endY, hasMark: true }];
+  } else {
+    const zoneCenter = zoneRect.x + zoneRect.w / 2;
+    const midUsable = mL + usableW / 2;
+    const markInLeft = zoneCenter < midUsable;
+    const markColX = markInLeft ? leftColX : rightColX;
+    const otherColX = markInLeft ? rightColX : leftColX;
+    const markRange = computeDescYRange(zoneRect, mT, H - mB, cfg.desc_position || "auto");
+    columnBounds = [
+      { left: markColX, right: markColX + colW, startY: markRange.startY, endY: markRange.endY, hasMark: true },
+      { left: otherColX, right: otherColX + colW, startY: mT, endY: H - mB, hasMark: false },
+    ];
+    columnBounds.sort((a, b) => (b.hasMark ? 1 : 0) - (a.hasMark ? 1 : 0));
+  }
+
+  const opts = {
+    desc_manual: !!cfg.desc_manual,
+    sec_gap_mm: cfg.desc_sec_gap_mm,
+    row_gap_mm: cfg.desc_row_gap_mm,
+    forced_scale: (cfg.desc_forced_scale || 0) / 100,
+    columnBounds,
+    page_cols: pageCols,
+  };
+  const descLayout = layoutFusionSections(cfg.desc_sections || [], cfg.nq, opts);
+  return { zone: zoneRect, desc: descLayout, page_size: cfg.page_size, sheet_wh: [W, H], columnBounds };
+}
+
+function layoutFusionSections(sections, cfg_nq_offset, opts) {
+  const columnBounds = opts.columnBounds || [];
+  const page_cols = opts.page_cols || 1;
+  const sec_gap = mmToPx(opts.sec_gap_mm !== undefined ? opts.sec_gap_mm : 2.6);
+  const row_gap_h = mmToPx(opts.row_gap_mm !== undefined ? opts.row_gap_mm : 1.6);
+  const forced_scale = opts.forced_scale || 0;
+  const manual = !!opts.desc_manual;
+  const base_box_h = { symbol:95, word:118, short:135, essay:100, blank:105, correct:110 };
+  const sec_hdr_h = 42;
+
+  function sec_dims(sec) {
+    const lines = Math.max(1, sec.lines || 1);
+    let bh0;
+    if (sec.type === "essay") bh0 = base_box_h.essay * lines + 24;
+    else bh0 = base_box_h[sec.type] || 118;
+    const cols = Math.max(1, sec.cols || 1);
+    const rows = Math.ceil(sec.count / cols);
+    return { bh0, cols, rows, lines };
+  }
+  function sec_height(sec) {
+    const d = sec_dims(sec);
+    return sec_hdr_h + d.rows * d.bh0 + Math.max(0, d.rows - 1) * row_gap_h + sec_gap;
+  }
+
+  const sec_start_q = [];
+  let qacc = cfg_nq_offset + 1;
+  for (const sec of sections) { sec_start_q.push(qacc); qacc += sec.count; }
+
+  const heights = sections.map(sec_height);
+  const n = sections.length;
+  let split = n;
+  if (page_cols === 2 && n >= 2 && columnBounds.length >= 2) {
+    let bestMax = Infinity;
+    for (let s = 0; s <= n; s++) {
+      const h0 = heights.slice(0, s).reduce((a,b) => a+b, 0);
+      const h1 = heights.slice(s).reduce((a,b) => a+b, 0);
+      const avail0 = Math.max(1, columnBounds[0].endY - columnBounds[0].startY);
+      const avail1 = Math.max(1, columnBounds[1].endY - columnBounds[1].startY);
+      const ratio = Math.max(h0 / avail0, h1 / avail1);
+      if (ratio < bestMax) { bestMax = ratio; split = s; }
+    }
+  }
+
+  const groups = page_cols === 2 && columnBounds.length >= 2
+    ? [[0, split], [split, n]]
+    : [[0, n]];
+
+  let autoScale = 1;
+  if (!manual) {
+    if (forced_scale > 0) autoScale = forced_scale;
+    else {
+      let maxRatio = 0;
+      for (let ci = 0; ci < groups.length; ci++) {
+        const [s, e] = groups[ci];
+        const needed = heights.slice(s, e).reduce((a,b) => a+b, 0);
+        const avail = Math.max(1, columnBounds[ci].endY - columnBounds[ci].startY);
+        if (needed > 0) maxRatio = Math.max(maxRatio, needed / avail);
+      }
+      autoScale = maxRatio > 1 ? 1 / maxRatio : 1;
+    }
+  }
+
+  const secPlans = new Array(n);
+  for (let ci = 0; ci < groups.length; ci++) {
+    const [s, e] = groups[ci];
+    const cb = columnBounds[ci] || columnBounds[0];
+    const colW = cb.right - cb.left;
+    let curY = cb.startY;
+    const scale = manual ? (forced_scale > 0 ? forced_scale : 1) : autoScale;
+    for (let si = s; si < e; si++) {
+      const sec = sections[si];
+      const d = sec_dims(sec);
+      const bh = d.bh0 * scale;
+      const sh_h = sec_hdr_h * scale;
+      const rowGap = row_gap_h * scale;
+      const gapAfter = sec_gap * scale;
+      secPlans[si] = {
+        colIndex: ci, x: cb.left, y: curY, w: colW,
+        headerH: sh_h, boxH: bh, rowGap, cols: d.cols, rows: d.rows,
+        scale,
+      };
+      curY += sh_h + d.rows * bh + Math.max(0, d.rows - 1) * rowGap + gapAfter;
+    }
+  }
+
+  const questions = [], sec_headers = [];
+  for (let si = 0; si < n; si++) {
+    const sec = sections[si];
+    const plan = secPlans[si];
+    if (!plan) continue;
+    const d = sec_dims(sec);
+    const scale = plan.scale;
+
+    let mx, my, mw;
+    if (manual) {
+      mx = sec.mx != null ? mmToPx(sec.mx) : plan.x;
+      my = sec.my != null ? mmToPx(sec.my) : plan.y;
+      mw = sec.mw != null ? mmToPx(sec.mw) : plan.w;
+    } else {
+      mx = plan.x; my = plan.y; mw = plan.w;
+    }
+
+    const sh_h = sec_hdr_h * scale;
+    sec_headers.push({
+      title: sec.title, type_label: TYPE_LABELS[sec.type] || sec.type,
+      x: mx, y: my, w: mw, h: sh_h, section_idx: si,
+    });
+
+    const bw = (mw - (d.cols - 1) * 18) / d.cols;
+    const label_w = d.cols > 1 ? Math.min(68, Math.max(44, bw * 0.16)) : 68;
+    const r_gap = row_gap_h * scale;
+    const bh = d.bh0 * scale;
+    const top_y = my + sh_h;
+    const q_start = sec_start_q[si];
+
+    for (let i = 0; i < sec.count; i++) {
+      const r = Math.floor(i / d.cols), c = i % d.cols;
+      let dx = 0, dy = 0;
+      if (manual && sec.q_offsets && sec.q_offsets[i]) {
+        dx = mmToPx(sec.q_offsets[i].dx || 0);
+        dy = mmToPx(sec.q_offsets[i].dy || 0);
+      }
+      const bx = mx + c * (bw + 18) + dx;
+      const by = top_y + r * (bh + r_gap) + dy;
+      questions.push({
+        q: q_start + i, sec_title: sec.title, type: sec.type, score: sec.score,
+        lines: sec.lines || 1, blanks: sec.blanks || 1,
+        x: bx, y: by, w: bw, h: bh, label_w,
+        write_x: bx + label_w, write_y: by, write_w: bw - label_w, write_h: bh,
+        sub_no: i + 1, section_idx: si,
+      });
+    }
+  }
+
+  const scaleOut = manual ? (forced_scale > 0 ? forced_scale : 1) : autoScale;
+  return { questions, sec_headers, scale: scaleOut };
+}
+
+// ============================================================
+// 融合モード描画
+// ============================================================
+function drawFusionSheet(ctx, cfg, W, H, opts = {}) {
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
+  const pal = OMR_COLOR_PALETTES[cfg.color_mode] || OMR_COLOR_PALETTES.color_cyan;
+  const descPal = COLOR_PALETTES[cfg.color_mode] || COLOR_PALETTES.color_cyan;
+  const is_bw = cfg.color_mode === "bw";
+  const base_col = descPal.baseline;
+  const sub_col = base_col.map(c => Math.min(255, Math.floor(c*0.55+255*0.45)));
+  drawMarkers(ctx, W, H, cfg.six_markers);
+  const rgb = c => `rgb(${c[0]},${c[1]},${c[2]})`;
+  const text = (x,y,s,size,bold,color,align) => {
+    ctx.save(); ctx.fillStyle = rgb(color||[0,0,0]);
+    ctx.font = `${bold?"bold ":""}${size}px "Yu Gothic UI",sans-serif`;
+    ctx.textAlign = align||"left"; ctx.textBaseline = "alphabetic";
+    ctx.fillText(String(s), x, y); ctx.restore();
+  };
+  const capsule = (a,b,w,h,col) => {
+    ctx.save(); ctx.strokeStyle = rgb(col); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(a,b,w,h,Math.min(w,h)/2.5); ctx.stroke(); ctx.restore();
+  };
+  const hline = (x0,x1,y,col,dashed) => {
+    ctx.save(); ctx.strokeStyle = rgb(col); ctx.lineWidth = (is_bw||dashed)?1:2;
+    if (is_bw||dashed) {
+      const st = is_bw?8:10, on = is_bw?3:5;
+      ctx.beginPath();
+      for (let sx = Math.floor(x0); sx < Math.floor(x1); sx += st) { ctx.moveTo(sx,y); ctx.lineTo(Math.min(sx+on, Math.floor(x1)), y); }
+      ctx.stroke();
+    } else { ctx.beginPath(); ctx.moveTo(x0,y); ctx.lineTo(x1,y); ctx.stroke(); }
+    ctx.restore();
+  };
+
+  const tnX = Number(cfg.tnX ?? 14);
+  const tnY = Number(cfg.tnY ?? 11.5);
+  const tnS = Number(cfg.tnS ?? 4.2);
+  text(mmToPx(tnX), mmToPx(tnY), cfg.tn || "テスト",
+       Math.max(14, Math.floor(mmToPx(tnS))), true, [0,0,0]);
+
+  drawScoreBox(ctx, W);
+
+  if (cfg.nm) {
+    const nx = mmToPx(Number(cfg.nmX ?? 14));
+    const ny = mmToPx(Number(cfg.nmY ?? 14));
+    const nw = mmToPx(Number(cfg.nmW ?? 143));
+    const nh = mmToPx(Number(cfg.nmH ?? 8));
+    ctx.strokeStyle = "#000"; ctx.lineWidth = 2; ctx.strokeRect(nx,ny,nw,nh);
+    ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(nx+110,ny); ctx.lineTo(nx+110,ny+nh); ctx.stroke();
+    text(nx+55, ny+nh*0.64, "氏名", 26, true, [0,0,0], "center");
+  }
+
+  if (cfg.id) {
+    const idY = mmToPx(Number(cfg.idY ?? 24.5));
+    const iw10 = mmToPx(Number(cfg.iw ?? 2.6));
+    const ih10 = mmToPx(Number(cfg.ih ?? 3.8));
+    const ix10 = mmToPx(Number(cfg.ix ?? 4.6));
+    const idl10 = mmToPx(Number(cfg.idl ?? 0.7));
+    const idf = getIdfMark(cfg);
+    const groupX = idf[0][1];
+    const numX = idf[2][1];
+    const labelOffX = mmToPx(Number(cfg.idLabelX ?? 0));
+    const labelOffY = mmToPx(Number(cfg.idLabelY ?? 0));
+    const labelSize = Math.max(12, Math.floor(mmToPx(Number(cfg.idLabelS ?? 2.6))));
+    const groupBaseY = idf[0][2] + ih10 + 18;
+    const numBaseY = idf[2][2] + ih10 + 18;
+    text(groupX - 40 + labelOffX, groupBaseY + labelOffY, "組", labelSize, true, [0,0,0]);
+    text(numX - 60 + labelOffX, numBaseY + labelOffY, "番号", labelSize, true, [0,0,0]);
+    for (const [_, a, b, m] of idf) {
+      for (let i = 0; i < m; i++) {
+        const bx = a + i*ix10;
+        capsule(bx, b, iw10, ih10, pal.bubble);
+        text(bx+iw10/2, b-idl10, "1234567890"[i], 18, false, pal.num_text, "center");
+      }
+    }
+  }
+
+  const layout = computeFusionLayout(cfg);
+  const zone = layout.zone;
+  const manual = !!cfg.desc_manual;
+
+  if (cfg.nq > 0) {
+    const L = getLQ(cfg); const M = getLabMark(cfg);
+    const bw = mmToPx(cfg.bw), bh = mmToPx(cfg.bh), pp = mmToPx(cfg.px);
+    const lh10 = mmToPx(cfg.lh), ng10 = mmToPx(cfg.ng);
+
+    if (cfg.mark_show_header !== false) {
+      const hdrRect = computeMarkHeaderRect(cfg, zone);
+      const coloredW = hdrRect.w;
+      ctx.fillStyle = rgb(descPal.hdr_bg);
+      ctx.fillRect(hdrRect.x, hdrRect.y, coloredW, hdrRect.h);
+      text(hdrRect.x + coloredW/2, hdrRect.y + hdrRect.h*0.72,
+           cfg.mark_title || "大問1", 22, true, [255,255,255], "center");
+      text(hdrRect.x + coloredW + mmToPx(2), hdrRect.y + hdrRect.h*0.72,
+           "【マーク】", 15, false, descPal.qno_text);
+    }
+
+    if (cfg.mark_show_boxes) {
+      ctx.strokeStyle = rgb(descPal.box_outline); ctx.lineWidth = 2;
+      for (let q = 0; q < cfg.nq; q++) {
+        const [a, b] = L.pos(q);
+        const bx = a - ng10 - mmToPx(3.5);
+        const by = b - mmToPx(0.4);
+        const bwBox = (M.length - 1) * pp + bw + ng10 + mmToPx(4);
+        const bhBox = bh + mmToPx(0.8);
+        ctx.strokeRect(bx, by, bwBox, bhBox);
+      }
+    }
+
+    for (let q = 0; q < cfg.nq; q++) {
+      const [a,b] = L.pos(q);
+      if (q % L.rows === 0) {
+        for (let i = 0; i < M.length; i++) text(a+i*pp+bw/2, b-lh10, M[i], 20, false, pal.num_text, "center");
+      }
+      for (let i = 0; i < M.length; i++) capsule(a+i*pp, b, bw, bh, pal.bubble);
+      text(a-ng10, b+bh*0.7, String(q+1), 20, false, pal.num_text, "right");
+    }
+  }
+
+  for (const sh of layout.desc.sec_headers) {
+    const hy = sh.y+4, hh = Math.max(24, sh.h-8);
+    ctx.fillStyle = rgb(descPal.hdr_bg); ctx.fillRect(sh.x, hy, 130, hh);
+    if (manual) {
+      ctx.fillStyle = "rgba(255,255,255,0.9)";
+      const gx = sh.x + 8, gy = hy + hh/2 - 6;
+      for (let r = 0; r < 3; r++) {
+        ctx.fillRect(gx, gy + r*5, 3, 3);
+        ctx.fillRect(gx+6, gy + r*5, 3, 3);
+      }
+    }
+    text(sh.x+65 + (manual?8:0), hy+hh*0.72, sh.title, 22, true, [255,255,255], "center");
+    text(sh.x+145 + (manual?8:0), hy+hh*0.72, `【${sh.type_label}】`, 15, false, descPal.qno_text);
+  }
+
+  for (const qb of layout.desc.questions) {
+    const { x:bx, y:by, w:bw, h:bh, label_w:lw, write_x:wx, write_w:ww, type:t } = qb;
+    ctx.strokeStyle = rgb(descPal.box_outline); ctx.lineWidth = 2;
+    ctx.strokeRect(bx, by, bw, bh);
+    ctx.fillStyle = rgb(descPal.label_bg); ctx.fillRect(bx+2, by+2, lw-3, bh-4);
+    ctx.strokeStyle = rgb(descPal.label_sep); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(bx+lw, by); ctx.lineTo(bx+lw, by+bh); ctx.stroke();
+    text(bx+lw/2, by+bh*0.58, `問${qb.q}`, 20, true, descPal.qno_text, "center");
+    if (t === "blank") {
+      const slots = qb.blanks || 1;
+      const slotGap = 8;
+      const minSlotW = 40;
+      const slotW = Math.max(minSlotW, (ww - slotGap*(slots-1)) / slots);
+      const totalW = slotW * slots + slotGap * (slots - 1);
+      if (totalW > ww) {
+        ctx.save(); ctx.strokeStyle = "rgba(220,38,38,0.5)"; ctx.setLineDash([6,4]); ctx.lineWidth = 1;
+        ctx.strokeRect(wx-2, by+4, ww+4, bh-8); ctx.restore();
+      }
+      for (let k = 0; k < slots; k++) {
+        const sx = wx + k*(slotW+slotGap);
+        ctx.strokeStyle = rgb(descPal.label_sep); ctx.lineWidth = 1;
+        ctx.strokeRect(sx, by+6, Math.min(slotW, ww-(sx-wx)), bh-12);
+        text(sx + slotW/2, by + 24, `(${k+1})`, 15, false, descPal.qno_text, "center");
+        const baseY = by + bh*0.73;
+        hline(sx+8, sx+slotW-8, baseY, base_col, false);
+      }
+    } else if (t === "correct") {
+      const symW = Math.max(55, ww * 0.22);
+      const corW = ww - symW - 8;
+      ctx.strokeStyle = rgb(descPal.label_sep); ctx.lineWidth = 2;
+      ctx.strokeRect(wx, by+6, symW, bh-12);
+      text(wx + symW/2, by + 24, "記号", 15, false, descPal.qno_text, "center");
+      hline(wx+8, wx+symW-8, by + bh*0.73, base_col, false);
+      ctx.strokeRect(wx+symW+8, by+6, corW, bh-12);
+      text(wx+symW+8 + corW/2, by + 24, "訂正", 15, false, descPal.qno_text, "center");
+      hline(wx+symW+16, wx+symW+corW-8, by + bh*0.73, base_col, false);
+    } else if (t === "word" || t === "short") {
+      const top_y = by+bh*0.22, mid_y = by+bh*0.47, base_y = by+bh*0.73, desc_y = by+bh*0.90;
+      const x0 = wx+16, x1 = wx+ww-16;
+      hline(x0,x1,top_y,sub_col,true); hline(x0,x1,mid_y,sub_col,true);
+      hline(x0,x1,base_y,base_col,false); hline(x0,x1,desc_y,sub_col,true);
+    } else if (t === "essay") {
+      const tp = 18, step = (bh-tp-12)/Math.max(1, qb.lines);
+      for (let k = 1; k <= qb.lines; k++) hline(wx+18, bx+bw-18, by+tp+k*step-6, base_col, false);
+    } else if (t === "symbol") {
+      const gw = Math.min(ww*0.56, bh*0.72), gh = bh*0.68;
+      const gx0 = wx+(ww-gw)/2, gy0 = by+(bh-gh)/2;
+      const gx1 = gx0+gw, gy1 = gy0+gh, cl = Math.min(12, gw*0.22);
+      ctx.strokeStyle = rgb(sub_col); ctx.lineWidth = 2;
+      for (const [cxa,cya,dxs,dys] of [[gx0,gy0,1,1],[gx1,gy0,-1,1],[gx0,gy1,1,-1],[gx1,gy1,-1,-1]]) {
+        ctx.beginPath(); ctx.moveTo(cxa,cya); ctx.lineTo(cxa+dxs*cl,cya);
+        ctx.moveTo(cxa,cya); ctx.lineTo(cxa,cya+dys*cl); ctx.stroke();
+      }
+    }
+  }
+
+  if (opts.showZone) {
+    ctx.save();
+    ctx.strokeStyle = "rgba(147,51,234,0.7)"; ctx.setLineDash([14,8]); ctx.lineWidth = 2.5;
+    ctx.strokeRect(zone.x, zone.y, zone.w, zone.h);
+    ctx.fillStyle = "rgba(147,51,234,0.05)";
+    ctx.fillRect(zone.x, zone.y, zone.w, zone.h);
+    const hx = zone.x + zone.w - 14, hy = zone.y + zone.h - 14;
+    ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(147,51,234,0.9)"; ctx.fillRect(hx, hy, 14, 14);
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.strokeRect(hx, hy, 14, 14);
+    ctx.restore();
+  }
+}
+
+// ============================================================
+// テンプレート生成
+// ============================================================
+function makeTemplateSmall(mode, cfg) {
+  const [W,H] = PAGE_SIZES[cfg.page_size] || PAGE_SIZES.a4_p;
+  const sw = Math.floor(W/8), sh = Math.floor(H/8);
+  const off = document.createElement("canvas");
+  off.width = W; off.height = H;
+  const octx = off.getContext("2d");
+  if (mode === "fusion") drawFusionSheet(octx, cfg, W, H, { showZone: false });
+  else drawSheet(octx, cfg, W, H);
+  const small = document.createElement("canvas");
+  small.width = sw; small.height = sh;
+  const sctx = small.getContext("2d");
+  sctx.drawImage(off, 0, 0, sw, sh);
+  const d = sctx.getImageData(0, 0, sw, sh);
+  const g = new Uint8Array(sw*sh);
+  for (let i = 0; i < d.data.length; i += 4) g[i/4] = (d.data[i]*77 + d.data[i+1]*151 + d.data[i+2]*28) >> 8;
+  const gc = document.createElement("canvas"); gc.width = sw; gc.height = sh;
+  const gctx = gc.getContext("2d");
+  const gi = gctx.createImageData(sw, sh);
+  for (let i = 0; i < g.length; i++) {
+    const o = i*4;
+    gi.data[o] = g[i]; gi.data[o+1] = g[i]; gi.data[o+2] = g[i]; gi.data[o+3] = 255;
+  }
+  gctx.putImageData(gi, 0, 0);
+  return { b64: gc.toDataURL("image/png").split(",")[1], w: sw, h: sh };
+}
+
+// ============================================================
+// manifest
+// ============================================================
+async function exportOmrManifestFusion(cfg) {
+  const [W, H] = PAGE_SIZES[cfg.page_size];
+  const L = getLQ(cfg); const M = getLabMark(cfg);
+  const bw = mmToPx(cfg.bw), bh = mmToPx(cfg.bh), pp = mmToPx(cfg.px);
+  const questions = [];
+  let x_min = Infinity, y_min = Infinity, x_max = -Infinity, y_max = -Infinity;
+  for (let q = 0; q < cfg.nq; q++) {
+    const [a,b] = L.pos(q);
+    const choices = [];
+    for (let i = 0; i < M.length; i++) {
+      const cx = a+i*pp+bw/2, cy = b+bh/2;
+      x_min = Math.min(x_min, a+i*pp); y_min = Math.min(y_min, b);
+      x_max = Math.max(x_max, a+i*pp+bw); y_max = Math.max(y_max, b+bh);
+      choices.push({ label: M[i], cx: Math.round(cx*10)/10, cy: Math.round(cy*10)/10 });
+    }
+    questions.push({ q: q+1, score: 1, ls: cfg.ls, choices });
+  }
+  const id_groups = [];
+  if (cfg.id) {
+    const iw10 = mmToPx(cfg.iw), ih10 = mmToPx(cfg.ih), ix10 = mmToPx(cfg.ix);
+    for (const [name, a, b, m] of getIdfMark(cfg)) {
+      const digits = [];
+      for (let i = 0; i < m; i++) digits.push({ label:"1234567890"[i], cx: Math.round((a+i*ix10+iw10/2)*10)/10, cy: Math.round((b+ih10/2)*10)/10 });
+      id_groups.push({ name, digits });
+    }
+  }
+  const MK = [[60,60],[W-60,60],[W-60,H-60],[60,H-60]];
+  const MK_MID = [[60,H/2],[W-60,H/2]];
+  const markers = cfg.six_markers ? MK.concat(MK_MID) : MK;
+  const tpl = makeTemplateSmall("fusion", cfg);
+  const payload = {
+    schema_version:1, kind:"omr", test_name: cfg.tn || "",
+    page_size: cfg.page_size, sheet_wh_px: [W, H],
+    marker_count: markers.length,
+    marker_design_px: markers.map(m => [m[0], m[1]]),
+    mark_zone_px: questions.length ? [Math.round(x_min*10)/10, Math.round(y_min*10)/10, Math.round(x_max*10)/10, Math.round(y_max*10)/10] : null,
+    bubble_size_px: [Math.round(bw*10)/10, Math.round(bh*10)/10],
+    questions, id_groups,
+    template_small_png_b64: tpl.b64,
+    template_small_wh: [tpl.w, tpl.h],
+  };
+  payload.checksum = await sha256Hex(JSON.stringify({
+    page_size: payload.page_size,
+    marker_design_px: payload.marker_design_px,
+    bubble_size_px: payload.bubble_size_px,
+    mark_zone_px: payload.mark_zone_px,
+    questions: payload.questions,
+    id_groups: payload.id_groups,
+    template_small_png_b64: payload.template_small_png_b64,
+  }));
+  return payload;
+}
+async function exportOmrManifestMixed(cfg) {
+  const [W,H] = PAGE_SIZES[cfg.page_size] || PAGE_SIZES.a4_p;
+  const layout = computeLayoutBoxes(cfg);
+  const MK = [[60,60],[W-60,60],[W-60,H-60],[60,H-60]];
+  const MK_MID = [[60,H>>1],[W-60,H>>1]];
+  const markers = cfg.six_markers ? MK.concat(MK_MID) : MK;
+  const questions = [];
+  let x_min = Infinity, y_min = Infinity, x_max = -Infinity, y_max = -Infinity;
+  for (const qb of layout.questions) {
+    if (qb.type !== "mark") continue;
+    const labs = choiceLabels(qb.ls, qb.choices);
+    const choices = markBubbles(qb).map((b,i) => {
+      const cx = b[0]+b[2]/2, cy = b[1]+b[3]/2;
+      x_min = Math.min(x_min, b[0]); y_min = Math.min(y_min, b[1]);
+      x_max = Math.max(x_max, b[0]+b[2]); y_max = Math.max(y_max, b[1]+b[3]);
+      return { label: labs[i], cx: Math.round(cx*10)/10, cy: Math.round(cy*10)/10 };
+    });
+    questions.push({ q: qb.q, score: qb.score, ls: qb.ls, choices });
+  }
+  const id_groups = [];
+  if (cfg.id) {
+    const iw10 = mmToPx(cfg.iw), ih10 = mmToPx(cfg.ih), ix10 = mmToPx(cfg.ix);
+    for (const [name, a, b, m] of get_idf(cfg)) {
+      const digits = [];
+      for (let i = 0; i < m; i++) digits.push({ label:"1234567890"[i], cx: Math.round((a+i*ix10+iw10/2)*10)/10, cy: Math.round((b+ih10/2)*10)/10 });
+      id_groups.push({ name, digits });
+    }
+  }
+  const tpl = makeTemplateSmall("cmd", cfg);
+  const payload = {
+    schema_version:1, kind:"omr", test_name: cfg.tn,
+    page_size: cfg.page_size, sheet_wh_px:[W,H],
+    marker_count: markers.length,
+    marker_design_px: markers.map(m => [m[0], m[1]]),
+    mark_zone_px: questions.length ? [Math.round(x_min*10)/10, Math.round(y_min*10)/10, Math.round(x_max*10)/10, Math.round(y_max*10)/10] : null,
+    bubble_size_px: [32, 44],
+    questions, id_groups,
+    template_small_png_b64: tpl.b64,
+    template_small_wh: [tpl.w, tpl.h],
+  };
+  payload.checksum = await sha256Hex(JSON.stringify({
+    page_size: payload.page_size,
+    marker_design_px: payload.marker_design_px,
+    bubble_size_px: payload.bubble_size_px,
+    mark_zone_px: payload.mark_zone_px,
+    questions: payload.questions,
+    id_groups: payload.id_groups,
+    template_small_png_b64: payload.template_small_png_b64,
+  }));
+  return payload;
+}
+async function exportDescManifest(cfg, mode) {
+  const [W,H] = PAGE_SIZES[cfg.page_size] || PAGE_SIZES.a4_p;
+  let items = [];
+  const questions = mode === "fusion" ? computeFusionLayout(cfg).desc.questions : computeLayoutBoxes(cfg).questions.filter(q => q.type !== "mark");
+  for (const qb of questions) {
+    if (qb.type === "blank") {
+      const slots = qb.blanks || 1;
+      const slotGap = 8;
+      const slotW = Math.max(40, (qb.write_w - slotGap*(slots-1)) / slots);
+      for (let k = 0; k < slots; k++) {
+        const sx = qb.write_x + k*(slotW+slotGap);
+        items.push({
+          q: qb.q, sub: k+1, type: "blank", score: qb.score/slots,
+          model_answer: "", rubric: "",
+          crop_rect_px: [Math.round(sx), Math.round(qb.write_y+6), Math.round(sx+slotW), Math.round(qb.write_y+qb.write_h-6)],
+        });
+      }
+    } else if (qb.type === "correct") {
+      const symW = Math.max(55, qb.write_w * 0.22);
+      const corW = qb.write_w - symW - 8;
+      items.push({
+        q: qb.q, sub: "sym", type: "symbol", score: qb.score/2,
+        model_answer: "", rubric: "記号選択",
+        crop_rect_px: [Math.round(qb.write_x), Math.round(qb.write_y+6), Math.round(qb.write_x+symW), Math.round(qb.write_y+qb.write_h-6)],
+      });
+      items.push({
+        q: qb.q, sub: "correction", type: "word", score: qb.score/2,
+        model_answer: "", rubric: "訂正語句",
+        crop_rect_px: [Math.round(qb.write_x+symW+8), Math.round(qb.write_y+6), Math.round(qb.write_x+symW+8+corW), Math.round(qb.write_y+qb.write_h-6)],
+      });
+    } else {
+      items.push({
+        q: qb.q, type: qb.type, score: qb.score, model_answer: "", rubric: "",
+        crop_rect_px: [Math.round(qb.write_x), Math.round(qb.write_y), Math.round(qb.write_x+qb.write_w), Math.round(qb.write_y+qb.write_h)],
+      });
+    }
+  }
+  const id_groups = [];
+  const MK = [[60,60],[W-60,60],[W-60,H-60],[60,H-60]];
+  const MK_MID = [[60,H>>1],[W-60,H>>1]];
+  const markers = cfg.six_markers ? MK.concat(MK_MID) : MK;
+  const tpl = makeTemplateSmall(mode, cfg);
+  const payload = {
+    schema_version:1, kind:"desc", test_name: cfg.tn || "",
+    page_size: cfg.page_size, sheet_wh_px:[W,H],
+    marker_count: markers.length,
+    marker_design_px: markers.map(m => [m[0], m[1]]),
+    items, id_groups,
+    template_small_png_b64: tpl.b64,
+    template_small_wh: [tpl.w, tpl.h],
+  };
+  payload.checksum = await sha256Hex(JSON.stringify({
+    page_size: payload.page_size,
+    marker_design_px: payload.marker_design_px,
+    items: payload.items,
+    id_groups: payload.id_groups,
+    template_small_png_b64: payload.template_small_png_b64,
+  }));
+  return payload;
+}
+
+// ============================================================
+// answer_key
+// ============================================================
+function buildQuestionList(cfg, mode) {
+  const items = [];
+  if (mode === "fusion") {
+    if (cfg.nq > 0) {
+      const labels = getLabMark(cfg);
+      for (let i = 0; i < cfg.nq; i++) {
+        items.push({ q: i+1, type: "mark", score: 1, section: "マーク", labels, isMark: true });
+      }
+    }
+    const layout = computeFusionLayout(cfg);
+    for (const qb of layout.desc.questions) {
+      items.push({ q: qb.q, type: qb.type, score: qb.score, section: qb.sec_title, isMark: false });
+    }
+  } else {
+    const layout = computeLayoutBoxes(cfg);
+    for (const qb of layout.questions) {
+      if (qb.type === "mark") {
+        items.push({ q: qb.q, type: "mark", score: qb.score, section: qb.sec_title,
+          labels: choiceLabels(qb.ls, qb.choices), isMark: true });
+      } else {
+        items.push({ q: qb.q, type: qb.type, score: qb.score, section: qb.sec_title, isMark: false });
+      }
+    }
+  }
+  return items;
+}
+function getGradingModeForQ(q) { return state.gradingModes[String(q)] || "通常"; }
+function setGradingModeForQ(q, mode) {
+  if (!mode || mode === "通常") delete state.gradingModes[String(q)];
+  else state.gradingModes[String(q)] = mode;
+}
+function getScoreForQ(q, defaultScore) {
+  return state.customScores[String(q)] !== undefined ? state.customScores[String(q)] : defaultScore;
+}
+function exportAnswerKeyCSV(cfg, mode) {
+  const items = buildQuestionList(cfg, mode);
+  const rows = [["種別","配点","採点形式","正解"]];
+  for (const it of items) {
+    const score = getScoreForQ(it.q, it.score);
+    const gm = getGradingModeForQ(it.q) || (it.type === "essay" ? "手採点" : "通常");
+    let ans = "";
+    if (it.isMark) ans = state.answersMark[String(it.q)] || "";
+    else if (it.type !== "essay") ans = state.answersDesc[String(it.q)] || "";
+    rows.push([it.type, score, gm, ans]);
+  }
+  const csv = rows.map(r => r.map(c => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
+  return "\uFEFF" + csv;
+}
+function exportTemplateCSV(cfg, mode) {
+  const items = buildQuestionList(cfg, mode);
+  const rows = [["種別","配点","採点形式","正解"]];
+  for (const it of items) {
+    const gm = it.type === "essay" ? "手採点" : "通常";
+    rows.push([it.type, it.score, gm, ""]);
+  }
+  const csv = rows.map(r => r.map(c => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
+  return "\uFEFF" + csv;
+}
+function parseCSVLine(line) {
+  const out = []; let cur = "", inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQ) {
+      if (ch === '"' && line[i+1] === '"') { cur += '"'; i++; }
+      else if (ch === '"') inQ = false;
+      else cur += ch;
+    } else {
+      if (ch === '"') inQ = true;
+      else if (ch === ',') { out.push(cur); cur = ""; }
+      else cur += ch;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+async function importAnswerKeyCSV(file, cfg, mode) {
+  const text = await file.text();
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter(l => l.trim());
+  if (!lines.length) return;
+  let start = 0;
+  if (lines[0].includes("種別") || lines[0].includes("配点")) start = 1;
+  const items = buildQuestionList(cfg, mode);
+  let cnt = 0;
+  for (let i = start; i < lines.length; i++) {
+    const cols = parseCSVLine(lines[i]);
+    if (cols.length < 4) continue;
+    const [type, scoreStr, gm, ans] = cols;
+    const q = i - start + 1;
+    const item = items[q - 1];
+    if (!item) break;
+    const score = parseFloat(scoreStr);
+    if (Number.isFinite(score)) state.customScores[String(q)] = score;
+    setGradingModeForQ(q, gm || "通常");
+    if (item.isMark) state.answersMark[String(q)] = ans || "";
+    else if (item.type !== "essay") state.answersDesc[String(q)] = ans || "";
+    cnt++;
+  }
+  log(`answer_key.csv を ${cnt} 行読み込みました`);
+}
+
+// ============================================================
+// answer_key エディタ
+// ============================================================
+function openAnswerEditor() {
+  const mode = state.mode;
+  const cfg = mode === "fusion" ? state.fusionCfg : state.cfg;
+  const items = buildQuestionList(cfg, mode);
+  const body = document.getElementById("answer_editor_body");
+  body.innerHTML = "";
+  if (!items.length) {
+    body.innerHTML = '<tr><td colspan="5" class="text-center py-8 text-slate-400">設問がありません</td></tr>';
+    document.getElementById("answer_editor_modal").classList.remove("hidden");
+    return;
+  }
+  for (const it of items) {
+    const tr = document.createElement("tr");
+    tr.className = "border-b hover:bg-slate-50";
+    const score = getScoreForQ(it.q, it.score);
+    const gm = getGradingModeForQ(it.q);
+    const ans = it.isMark ? (state.answersMark[String(it.q)] || "") : (state.answersDesc[String(it.q)] || "");
+    let ansCell;
+    if (it.isMark) {
+      ansCell = '<div class="flex gap-1 flex-wrap">' + it.labels.map(l =>
+        `<button type="button" data-q="${escapeHtml(it.q)}" data-val="${escapeHtml(l)}" class="ans-mark-btn px-2 py-0.5 ${ans===l?'bg-amber-600 text-white':'bg-slate-100 hover:bg-slate-200'} rounded font-bold text-[11px]">${escapeHtml(l)}</button>`
+      ).join("") + "</div>";
+    } else if (it.type === "essay") {
+      ansCell = '<span class="text-slate-400 italic text-[11px]">(手採点)</span>';
+    } else {
+      const ph = it.type === "blank" ? "空欄1/空欄2/空欄3"
+              : it.type === "correct" ? "記号/訂正語句"
+              : "正答（別解は/区切り）";
+      ansCell = `<input type="text" data-q="${escapeHtml(it.q)}" value="${escapeHtml(ans)}" placeholder="${escapeHtml(ph)}" class="ans-input w-full px-1.5 py-0.5 border rounded text-xs font-mono">`;
+    }
+    tr.innerHTML = `
+      <td class="px-1 py-1 font-bold">${escapeHtml(it.q)}</td>
+      <td class="px-1 py-1"><span class="text-[10px] px-1 py-0.5 rounded bg-indigo-100 text-indigo-800">${escapeHtml(TYPE_LABEL_JA[it.type] || it.type)}</span></td>
+      <td class="px-1 py-1 text-center"><input type="number" data-q="${escapeHtml(it.q)}" value="${escapeHtml(score)}" min="0" max="100" step="0.5" class="score-input w-14 px-1 py-0.5 border rounded text-xs text-right"></td>
+      <td class="px-1 py-1"><select data-q="${escapeHtml(it.q)}" class="mode-select px-1 py-0.5 border rounded text-xs w-full">${GRADING_MODES.map(m => `<option value="${escapeHtml(m)}" ${gm===m?'selected':''}>${escapeHtml(m)}</option>`).join("")}</select></td>
+      <td class="px-1 py-1">${ansCell}</td>`;
+    body.appendChild(tr);
+  }
+  body.querySelectorAll(".ans-mark-btn").forEach(btn => {
+    btn.addEventListener("click", e => {
+      const q = e.currentTarget.dataset.q;
+      const v = e.currentTarget.dataset.val;
+      state.answersMark[q] = (state.answersMark[q] === v) ? "" : v;
+      openAnswerEditor();
+    });
+  });
+  body.querySelectorAll(".ans-input").forEach(inp => {
+    inp.addEventListener("input", e => {
+      state.answersDesc[e.target.dataset.q] = e.target.value;
+    });
+  });
+  body.querySelectorAll(".score-input").forEach(inp => {
+    inp.addEventListener("input", e => {
+      const v = parseFloat(e.target.value);
+      if (Number.isFinite(v)) state.customScores[e.target.dataset.q] = v;
+    });
+  });
+  body.querySelectorAll(".mode-select").forEach(sel => {
+    sel.addEventListener("change", e => {
+      setGradingModeForQ(e.target.dataset.q, e.target.value);
+    });
+  });
+  document.getElementById("answer_editor_modal").classList.remove("hidden");
+}
+
+// ============================================================
+// 出力ヘルパ
+// ============================================================
+function downloadJSON(obj, name) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type:"application/json" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+function downloadText(text, name, mime="text/plain") {
+  const blob = new Blob([text], { type:mime });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+function downloadPNG(canvas, name) {
+  canvas.toBlob(blob => {
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }, "image/png");
+}
+async function downloadPDF(canvas, mode, cfg, name) {
+  const { jsPDF } = window.jspdf;
+  const [W,H] = PAGE_SIZES[cfg.page_size];
+  const Wmm = W/10, Hmm = H/10;
+  const pdf = new jsPDF({ orientation: Wmm > Hmm ? "landscape" : "portrait", unit:"mm", format:[Wmm, Hmm] });
+  pdf.addImage(canvas.toDataURL("image/png"), "PNG", 0, 0, Wmm, Hmm);
+  pdf.save(name);
+}
+
+// ============================================================
+// 手動配置の初期化
+// ============================================================
+function populateManualPositionsFromAuto(force = false) {
+  const fc = state.fusionCfg;
+  const saved_manual = fc.desc_manual;
+  fc.desc_manual = false;
+  const autoLayout = computeFusionLayout(fc);
+  fc.desc_manual = saved_manual;
+  for (const sh of autoLayout.desc.sec_headers) {
+    const idx = sh.section_idx;
+    if (idx == null || !fc.desc_sections[idx]) continue;
+    if (force || fc.desc_sections[idx].mx == null) fc.desc_sections[idx].mx = roundMm(pxToMm(sh.x));
+    if (force || fc.desc_sections[idx].my == null) fc.desc_sections[idx].my = roundMm(pxToMm(sh.y));
+    if (force || fc.desc_sections[idx].mw == null) fc.desc_sections[idx].mw = roundMm(pxToMm(sh.w));
+  }
+}
+function resetManualPositions() {
+  for (const sec of state.fusionCfg.desc_sections) {
+    sec.mx = null; sec.my = null; sec.mw = null; sec.q_offsets = {};
+  }
+  populateManualPositionsFromAuto(true);
+}
+
+// ============================================================
+// 融合への取り込み
+// ============================================================
+function _sectionsToFusion(sections, parsedKey, sourceName) {
+  const markSec = sections.find(s => s.type === "mark");
+  if (markSec) {
+    state.fusionCfg.nq = markSec.count;
+    state.fusionCfg.nc = markSec.choices;
+    state.fusionCfg.cols = markSec.cols;
+    state.fusionCfg.ls = markSec.ls;
+  } else {
+    state.fusionCfg.nq = 0;
+  }
+  const desc = [];
+  const qMap = {};
+  let cmdQ = 1, fusionQ = 1;
+  sections.forEach(sec => {
+    const cnt = sec.count;
+    if (sec.type === "mark") {
+      for (let i = 0; i < cnt; i++) qMap[cmdQ + i] = fusionQ + i;
+      cmdQ += cnt;
+      fusionQ += cnt;
+      return;
+    }
+    for (let i = 0; i < cnt; i++) qMap[cmdQ + i] = null;
+    desc.push({
+      title: sec.title,
+      type: ["symbol","short","essay","blank","correct"].includes(sec.type) ? sec.type : "word",
+      count: sec.count, score: sec.score, cols: sec.cols, lines: sec.lines,
+      blanks: sec.blanks || 1,
+      mx: null, my: null, mw: null, q_offsets: {},
+      _cmdStartQ: cmdQ,
+    });
+    cmdQ += cnt;
+  });
+  let descQ = fusionQ;
+  for (const d of desc) {
+    for (let i = 0; i < d.count; i++) qMap[d._cmdStartQ + i] = descQ + i;
+    descQ += d.count;
+    delete d._cmdStartQ;
+  }
+  state.fusionCfg.desc_sections = desc;
+
+  state.fusionCfg.page_size = state.cfg.page_size || "a4_p";
+  state.fusionCfg.page_cols = state.cfg.page_cols || 1;
+  state.fusionCfg.tn = state.cfg.tn || "";
+  state.fusionCfg.color_mode = state.cfg.color_mode || "color_cyan";
+  state.fusionCfg.id = state.cfg.id;
+  state.fusionCfg.nm = state.cfg.nm;
+  state.fusionCfg.six_markers = state.cfg.six_markers;
+  state.fusionCfg.idY = state.cfg.idY;
+  state.fusionCfg.iw  = state.cfg.iw;
+  state.fusionCfg.ih  = state.cfg.ih;
+  state.fusionCfg.ix  = state.cfg.ix;
+  state.fusionCfg.idl = state.cfg.idl;
+  state.fusionCfg.idLabelX = state.cfg.idLabelX ?? 0;
+  state.fusionCfg.idLabelY = state.cfg.idLabelY ?? 0;
+  state.fusionCfg.idLabelS = state.cfg.idLabelS ?? 2.6;
+  state.fusionCfg.nmX = state.cfg.nmX;
+  state.fusionCfg.nmY = state.cfg.nmY;
+  state.fusionCfg.nmW = state.cfg.nmW;
+  state.fusionCfg.nmH = state.cfg.nmH;
+  state.fusionCfg.tnX = state.cfg.tnX;
+  state.fusionCfg.tnY = state.cfg.tnY;
+  state.fusionCfg.tnS = state.cfg.tnS;
+  if (markSec) state.fusionCfg.mark_title = markSec.title || "大問1";
+
+  const [newPageW] = PAGE_SIZES[state.fusionCfg.page_size];
+  const pageWmm = newPageW / 10;
+  const pageCols = state.fusionCfg.page_cols || 1;
+  const gap = getColGapMm(state.fusionCfg);
+  state.fusionCfg.zone_x = 14;
+  state.fusionCfg.zone_y = 44;
+  if (pageCols === 2) {
+    state.fusionCfg.zone_w = (pageWmm - 28 - gap) / 2;
+  } else {
+    state.fusionCfg.zone_w = pageWmm - 28;
+  }
+
+  if (parsedKey && parsedKey.length) {
+    parsedKey.forEach(k => {
+      if (!k.q || !k.answer) return;
+      const fusionQNum = qMap[k.q];
+      if (!fusionQNum) return;
+      const layout = computeFusionLayout(state.fusionCfg);
+      const qb = layout.desc.questions.find(q => q.q === fusionQNum);
+      if (fusionQNum <= state.fusionCfg.nq) {
+        state.answersMark[String(fusionQNum)] = k.answer;
+      } else if (qb && qb.type !== "essay") {
+        state.answersDesc[String(fusionQNum)] = k.answer;
+      }
+    });
+  }
+  populateManualPositionsFromAuto(true);
+  renderFusionDescList();
+  syncFusionUIFromState();
+  render();
+  const nDesc = desc.reduce((s, x) => s + x.count, 0);
+  log(`${sourceName}から取り込み完了：${PAGE_SIZE_LABELS[state.fusionCfg.page_size]} / ${state.fusionCfg.page_cols}段 / マーク${state.fusionCfg.nq}問＋記述${nDesc}問。`);
+  pushHistory();
+  autoSave();
+}
+function importFromCmdMode() {
+  const cmdText = document.getElementById("cmd").value.trim();
+  if (!cmdText) { log("命令文を入力してください。"); return; }
+  const sections = parseLayoutCommand(cmdText);
+  if (!sections.length) { log("命令文から大問を抽出できませんでした。"); return; }
+  state.cfg.sections = sections;
+  _sectionsToFusion(sections, state.parsedKey, "命令文モード");
+  switchMode("fusion");
+}
+function syncFusionUIFromState() {
+  const fc = state.fusionCfg;
+  document.getElementById("fu_page_size").value = fc.page_size;
+  document.getElementById("fu_nq").value = fc.nq;
+  document.getElementById("fu_cols").value = fc.cols;
+  document.getElementById("fu_nc").value = fc.nc;
+  document.getElementById("fu_ls").value = fc.ls;
+  document.getElementById("fu_grp").value = fc.grp;
+  document.getElementById("fu_bw").value = fc.bw;
+  document.getElementById("fu_bh").value = fc.bh;
+  document.getElementById("fu_px").value = fc.px;
+  document.getElementById("fu_py").value = fc.py;
+  document.getElementById("fu_nw").value = fc.nw;
+  document.getElementById("fu_ng").value = fc.ng;
+  document.getElementById("fu_lh").value = fc.lh;
+  document.getElementById("fu_zone_x").value = fc.zone_x;
+  document.getElementById("fu_zone_y").value = fc.zone_y;
+  document.getElementById("fu_zone_w").value = fc.zone_w;
+  document.getElementById("fu_desc_position").value = fc.desc_position || "auto";
+  document.getElementById("fu_page_cols").value = String(fc.page_cols || 1);
+  document.getElementById("fu_desc_manual").checked = !!fc.desc_manual;
+  document.getElementById("fu_desc_sec_gap_mm").value = fc.desc_sec_gap_mm ?? 2.6;
+  document.getElementById("fu_desc_row_gap_mm").value = fc.desc_row_gap_mm ?? 1.6;
+  document.getElementById("fu_desc_forced_scale").value = fc.desc_forced_scale ?? 0;
+  document.getElementById("fu_col_gap_mm").value = fc.col_gap_mm ?? 6;
+  document.getElementById("fu_mark_title").value = fc.mark_title ?? "大問1";
+  document.getElementById("fu_mark_show_header").checked = fc.mark_show_header !== false;
+  document.getElementById("fu_mark_show_boxes").checked = !!fc.mark_show_boxes;
+  document.getElementById("fu_mark_header_x").value = fc.mark_header_x ?? "";
+  document.getElementById("fu_mark_header_y").value = fc.mark_header_y ?? "";
+  document.getElementById("fu_idGroupX").value = fc.idGroupX ?? 0;
+  document.getElementById("fu_idGroupY").value = fc.idGroupY ?? 0;
+  document.getElementById("fu_idNumX").value = fc.idNumX ?? 0;
+  document.getElementById("fu_idNumY").value = fc.idNumY ?? 0;
+  document.getElementById("fu_tnX").value = fc.tnX ?? 14;
+  document.getElementById("fu_tnY").value = fc.tnY ?? 11.5;
+  document.getElementById("fu_tnS").value = fc.tnS ?? 4.2;
+  document.getElementById("fu_nmX").value = fc.nmX ?? 14;
+  document.getElementById("fu_nmY").value = fc.nmY ?? 14;
+  document.getElementById("fu_nmW").value = fc.nmW ?? 143;
+  document.getElementById("fu_nmH").value = fc.nmH ?? 8;
+  document.getElementById("fu_idY").value = fc.idY ?? 24.5;
+  document.getElementById("fu_iw").value = fc.iw ?? 2.6;
+  document.getElementById("fu_ih").value = fc.ih ?? 3.8;
+  document.getElementById("fu_ix").value = fc.ix ?? 4.6;
+  document.getElementById("fu_idl").value = fc.idl ?? 0.7;
+  document.getElementById("fu_idLabelX").value = fc.idLabelX ?? 0;
+  document.getElementById("fu_idLabelY").value = fc.idLabelY ?? 0;
+  document.getElementById("fu_idLabelS").value = fc.idLabelS ?? 2.6;
+  document.getElementById("tn").value = fc.tn || state.cfg.tn;
+  document.getElementById("color_mode").value = fc.color_mode || "color_cyan";
+}
+
+// ============================================================
+// 描画
+// ============================================================
+function render() {
+  const mode = state.mode;
+  let cfg, W, H;
+  if (mode === "fusion") { cfg = state.fusionCfg; [W,H] = PAGE_SIZES[cfg.page_size]; }
+  else { cfg = state.cfg; [W,H] = PAGE_SIZES[cfg.page_size] || PAGE_SIZES.a4_p; }
+  const canvas = document.getElementById("preview");
+  if (canvas.width !== W) canvas.width = W;
+  if (canvas.height !== H) canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  if (mode === "fusion") drawFusionSheet(ctx, cfg, W, H, { showZone: true });
+  else drawSheet(ctx, cfg, W, H);
+  const cw = canvas.parentElement.clientWidth - 24;
+  const ch = canvas.parentElement.clientHeight - 24;
+  const s = Math.min(cw/W, ch/H);
+  canvas.style.width = Math.round(W*s)+"px";
+  canvas.style.height = Math.round(H*s)+"px";
+  canvas.classList.toggle("draggable", mode === "fusion");
+  const warn = document.getElementById("warnings");
+  const warns = [];
+  if (mode === "fusion") {
+    const zh = computeMarkZoneHeight(cfg);
+    const pageW = W/10, pageH = H/10;
+    if (cfg.zone_x < 0) warns.push("マーク左はみ出し");
+    if (cfg.zone_y < 0) warns.push("マーク上はみ出し");
+    if (cfg.zone_x + cfg.zone_w > pageW) warns.push("マーク右はみ出し");
+    if (cfg.zone_y + zh/10 > pageH) warns.push("マーク下はみ出し");
+    const layout = computeFusionLayout(cfg);
+    let maxY = 0;
+    for (const q of layout.desc.questions) maxY = Math.max(maxY, q.y + q.h);
+    if (maxY > H - 130) warns.push(`記述下はみ出し(${(maxY/10).toFixed(1)}mm)`);
+    for (const q of layout.desc.questions) {
+      if (q.x < layout.zone.x + layout.zone.w &&
+          q.x + q.w > layout.zone.x &&
+          q.y < layout.zone.y + layout.zone.h &&
+          q.y + q.h > layout.zone.y) {
+        warns.push("記述欄がマーク領域と重なっています");
+        break;
+      }
+    }
+    const nDesc = (cfg.desc_sections||[]).reduce((s,x) => s + x.count, 0);
+    const manualLabel = cfg.desc_manual ? " / 手動配置" : "";
+    document.getElementById("summary").textContent = `マーク${cfg.nq}問 + 記述${nDesc}問 / ${PAGE_SIZE_LABELS[cfg.page_size]} / ${cfg.page_cols||1}段${manualLabel}`;
+    document.getElementById("page_size").disabled = true;
+    document.getElementById("page_cols").disabled = true;
+  } else {
+    const layout = computeLayoutBoxes(state.cfg);
+    const total = layout.questions.reduce((a,q) => a+q.score, 0);
+    document.getElementById("summary").textContent = `${layout.nq}問 / 満点${total}点 / ${PAGE_SIZE_LABELS[state.cfg.page_size]} / ${state.cfg.page_cols||1}段`;
+    if (layout.warnings.length) warns.push(...layout.warnings);
+    document.getElementById("page_size").disabled = false;
+    document.getElementById("page_cols").disabled = false;
+  }
+  if (warns.length) { warn.textContent = "⚠️ " + warns.join(" / "); warn.classList.remove("hidden"); }
+  else warn.classList.add("hidden");
+}
+
+// ============================================================
+// 記述大問リスト
+// ============================================================
+function renderFusionDescList() {
+  const container = document.getElementById("fu_desc_list");
+  container.innerHTML = "";
+  const sections = state.fusionCfg.desc_sections || [];
+  const manual = !!state.fusionCfg.desc_manual;
+  sections.forEach((sec, idx) => {
+    const row = document.createElement("div");
+    row.className = "fu-desc-row";
+    const isBlank = sec.type === "blank";
+    const blanksOptions = Array.from({length: 10}, (_, i) => i + 1)
+      .map(n => `<option value="${n}" ${((sec.blanks||1)===n)?'selected':''}>${n}</option>`).join("");
+    const blanksCell = isBlank
+      ? `<span class="text-[10px]">空欄</span><select data-idx="${idx}" data-field="blanks" class="fu-input px-1 py-0.5 border rounded" style="width:40px">${blanksOptions}</select>`
+      : ``;
+    const manualCell = manual
+      ? `<span class="text-[10px] text-amber-700 font-bold">X</span><input type="number" step="0.5" data-idx="${idx}" data-field="mx" id="fu_desc_mx_${idx}" value="${sec.mx != null ? sec.mx : ''}" placeholder="auto" class="fu-input px-1 py-0.5 border rounded border-amber-400" style="width:48px">
+         <span class="text-[10px] text-amber-700 font-bold">Y</span><input type="number" step="0.5" data-idx="${idx}" data-field="my" id="fu_desc_my_${idx}" value="${sec.my != null ? sec.my : ''}" placeholder="auto" class="fu-input px-1 py-0.5 border rounded border-amber-400" style="width:48px">
+         <button data-idx="${idx}" class="btn-desc-reset-one text-amber-700 font-bold text-[10px] px-1" title="この大問の位置をリセット">↺</button>`
+      : ``;
+    row.innerHTML = `
+      <div class="flex flex-wrap items-center gap-1 text-[11px]">
+        <input type="text" value="${escapeHtml(sec.title||'')}" data-idx="${idx}" data-field="title" class="fu-input px-1 py-0.5 border rounded" style="width:78px" placeholder="タイトル">
+        <select data-idx="${idx}" data-field="type" class="fu-input px-1 py-0.5 border rounded" style="width:56px">
+          <option value="word" ${sec.type==='word'?'selected':''}>英単語</option>
+          <option value="short" ${sec.type==='short'?'selected':''}>短文</option>
+          <option value="symbol" ${sec.type==='symbol'?'selected':''}>記号</option>
+          <option value="essay" ${sec.type==='essay'?'selected':''}>英作文</option>
+          <option value="blank" ${sec.type==='blank'?'selected':''}>穴埋め</option>
+          <option value="correct" ${sec.type==='correct'?'selected':''}>訂正</option>
+        </select>
+        <span class="text-[10px]">問</span><input type="number" value="${sec.count||0}" data-idx="${idx}" data-field="count" min="0" max="50" class="fu-input px-1 py-0.5 border rounded" style="width:42px">
+        <span class="text-[10px]">点</span><input type="number" value="${sec.score||2}" data-idx="${idx}" data-field="score" min="0" max="100" step="0.5" class="fu-input px-1 py-0.5 border rounded" style="width:42px">
+        <span class="text-[10px]">列</span><input type="number" value="${sec.cols||1}" data-idx="${idx}" data-field="cols" min="1" max="6" class="fu-input px-1 py-0.5 border rounded" style="width:36px">
+        <span class="text-[10px]">行</span><input type="number" value="${sec.lines||1}" data-idx="${idx}" data-field="lines" min="1" max="10" class="fu-input px-1 py-0.5 border rounded" style="width:36px">
+        ${blanksCell}
+        ${manualCell}
+        <button data-idx="${idx}" class="btn-fu-del-desc text-red-600 font-bold text-[11px] px-1">✕</button>
+      </div>`;
+    container.appendChild(row);
+  });
+  container.querySelectorAll(".fu-input").forEach(inp => {
+    inp.addEventListener("input", (e) => {
+      const idx = parseInt(e.target.dataset.idx);
+      const field = e.target.dataset.field;
+      let v = e.target.value;
+      if (["count","score","cols","lines","blanks"].includes(field)) v = parseFloat(v) || 1;
+      if (["mx","my","mw"].includes(field)) {
+        v = v === "" ? null : parseFloat(v);
+      }
+      state.fusionCfg.desc_sections[idx][field] = v;
+      if (field === "type") { renderFusionDescList(); }
+      render();
+      autoSave();
+    });
+  });
+  container.querySelectorAll(".btn-fu-del-desc").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      const idx = parseInt(e.currentTarget.dataset.idx);
+      state.fusionCfg.desc_sections.splice(idx, 1);
+      renderFusionDescList(); render();
+      pushHistory(); autoSave();
+    });
+  });
+  container.querySelectorAll(".btn-desc-reset-one").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      const idx = parseInt(e.currentTarget.dataset.idx);
+      state.fusionCfg.desc_sections[idx].mx = null;
+      state.fusionCfg.desc_sections[idx].my = null;
+      state.fusionCfg.desc_sections[idx].mw = null;
+      state.fusionCfg.desc_sections[idx].q_offsets = {};
+      populateManualPositionsFromAuto(false);
+      renderFusionDescList(); render();
+      pushHistory(); autoSave();
+    });
+  });
+}
+
+// ============================================================
+// モード切替
+// ============================================================
+function switchMode(mode) {
+  state.mode = mode;
+  document.querySelectorAll(".mode-tab").forEach(t => {
+    t.classList.toggle("active", t.dataset.mode === mode);
+    t.classList.toggle("inactive", t.dataset.mode !== mode);
+  });
+  document.getElementById("panel-cmd").classList.toggle("hidden", mode !== "cmd");
+  document.getElementById("panel-fusion").classList.toggle("hidden", mode !== "fusion");
+  render();
+}
+function switchCmdSubTab(sub) {
+  state.cmdSubTab = sub;
+  document.getElementById("subtab-manual").className = "subtab " + (sub==="manual"?"active":"inactive");
+  document.getElementById("subtab-text").className = "subtab " + (sub==="text"?"active":"inactive");
+  document.getElementById("subpanel-manual").classList.toggle("hidden", sub !== "manual");
+  document.getElementById("subpanel-text").classList.toggle("hidden", sub !== "text");
+}
+
+// ============================================================
+// UI同期
+// ============================================================
+function updateCmdFromUI() {
+  const c = state.cfg;
+  c.cmd = document.getElementById("cmd").value;
+  c.tn = document.getElementById("tn").value;
+  c.page_size = document.getElementById("page_size").value;
+  c.page_cols = parseInt(document.getElementById("page_cols").value) || 1;
+  c.id = document.getElementById("chk_id").checked ? 1 : 0;
+  c.nm = document.getElementById("chk_nm").checked ? 1 : 0;
+  c.six_markers = document.getElementById("chk_six").checked ? 1 : 0;
+  c.color_mode = document.getElementById("color_mode").value;
+  c.sections = parseLayoutCommand(c.cmd);
+}
+function updateFusionFromUI() {
+  const g = id => document.getElementById(id);
+  const fc = state.fusionCfg;
+  fc.page_size = g("fu_page_size").value;
+  fc.nq = parseInt(g("fu_nq").value) || 0;
+  fc.cols = parseInt(g("fu_cols").value) || 2;
+  fc.nc = parseInt(g("fu_nc").value) || 5;
+  fc.ls = g("fu_ls").value;
+  fc.grp = parseInt(g("fu_grp").value) || 5;
+  fc.bw = parseFloat(g("fu_bw").value) || 3.2;
+  fc.bh = parseFloat(g("fu_bh").value) || 4.4;
+  fc.px = parseFloat(g("fu_px").value) || 8;
+  fc.py = parseFloat(g("fu_py").value) || 6.8;
+  fc.nw = parseFloat(g("fu_nw").value) || 7;
+  fc.ng = parseFloat(g("fu_ng").value) || 1.4;
+  fc.lh = parseFloat(g("fu_lh").value) || 1;
+  fc.zone_x = parseFloat(g("fu_zone_x").value) || 20;
+  fc.zone_y = parseFloat(g("fu_zone_y").value) || 44;
+  fc.zone_w = parseFloat(g("fu_zone_w").value) || 170;
+  fc.desc_position = g("fu_desc_position").value || "auto";
+  fc.page_cols = parseInt(g("fu_page_cols").value) || 1;
+  fc.desc_manual = g("fu_desc_manual").checked;
+  fc.desc_sec_gap_mm = parseFloat(g("fu_desc_sec_gap_mm").value);
+  if (!Number.isFinite(fc.desc_sec_gap_mm)) fc.desc_sec_gap_mm = 2.6;
+  fc.desc_row_gap_mm = parseFloat(g("fu_desc_row_gap_mm").value);
+  if (!Number.isFinite(fc.desc_row_gap_mm)) fc.desc_row_gap_mm = 1.6;
+  fc.desc_forced_scale = parseFloat(g("fu_desc_forced_scale").value) || 0;
+  const cgv = parseFloat(g("fu_col_gap_mm").value);
+  fc.col_gap_mm = (Number.isFinite(cgv) && cgv >= 0) ? cgv : 6;
+  fc.mark_title = g("fu_mark_title").value || "大問1";
+  fc.mark_show_header = g("fu_mark_show_header").checked;
+  fc.mark_show_boxes = g("fu_mark_show_boxes").checked;
+  const mhx = g("fu_mark_header_x").value.trim();
+  fc.mark_header_x = mhx === "" ? null : (Number.isFinite(parseFloat(mhx)) ? parseFloat(mhx) : null);
+  const mhy = g("fu_mark_header_y").value.trim();
+  fc.mark_header_y = mhy === "" ? null : (Number.isFinite(parseFloat(mhy)) ? parseFloat(mhy) : null);
+  const nums = {
+    tnX: ["fu_tnX", 14], tnY: ["fu_tnY", 11.5], tnS: ["fu_tnS", 4.2],
+    nmX: ["fu_nmX", 14], nmY: ["fu_nmY", 14], nmW: ["fu_nmW", 143], nmH: ["fu_nmH", 8],
+    idY: ["fu_idY", 24.5], iw: ["fu_iw", 2.6], ih: ["fu_ih", 3.8], ix: ["fu_ix", 4.6], idl: ["fu_idl", 0.7],
+    idLabelX: ["fu_idLabelX", 0], idLabelY: ["fu_idLabelY", 0], idLabelS: ["fu_idLabelS", 2.6],
+    idGroupX: ["fu_idGroupX", 0], idGroupY: ["fu_idGroupY", 0],
+    idNumX: ["fu_idNumX", 0], idNumY: ["fu_idNumY", 0],
+  };
+  for (const k in nums) {
+    const [id, def] = nums[k];
+    const v = parseFloat(g(id).value);
+    fc[k] = Number.isFinite(v) ? v : def;
+  }
+  fc.tn = document.getElementById("tn").value;
+  fc.color_mode = document.getElementById("color_mode").value;
+  fc.id = document.getElementById("chk_id").checked ? 1 : 0;
+  fc.nm = document.getElementById("chk_nm").checked ? 1 : 0;
+  fc.six_markers = document.getElementById("chk_six").checked ? 1 : 0;
+}
+function updateFromUI() {
+  if (state.mode === "fusion") updateFusionFromUI();
+  else updateCmdFromUI();
+  render();
+  autoSave();
+}
+
+// ============================================================
+// ドラッグ（Pointer Events）
+// ============================================================
+let _dragState = null;
+let _dragStartSnapshotTaken = false;
+
+function _hitQuestionBox(px, py, layout) {
+  for (const q of layout.desc.questions) {
+    if (px >= q.x && px <= q.x + q.w && py >= q.y && py <= q.y + q.h) {
+      return { section_idx: q.section_idx, q_index: q.sub_no - 1 };
+    }
+  }
+  return null;
+}
+
+function _hitSectionArea(px, py, layout) {
+  const bounds = {};
+  for (const sh of layout.desc.sec_headers) {
+    const idx = sh.section_idx;
+    if (idx == null) continue;
+    if (!bounds[idx]) bounds[idx] = { x1: sh.x, y1: sh.y, x2: sh.x + Math.min(sh.w, 140), y2: sh.y + sh.h };
+    else {
+      bounds[idx].x1 = Math.min(bounds[idx].x1, sh.x);
+      bounds[idx].y1 = Math.min(bounds[idx].y1, sh.y);
+      bounds[idx].x2 = Math.max(bounds[idx].x2, sh.x + Math.min(sh.w, 140));
+      bounds[idx].y2 = Math.max(bounds[idx].y2, sh.y + sh.h);
+    }
+  }
+  for (const q of layout.desc.questions) {
+    const idx = q.section_idx;
+    if (idx == null || !bounds[idx]) continue;
+    bounds[idx].x1 = Math.min(bounds[idx].x1, q.x);
+    bounds[idx].y1 = Math.min(bounds[idx].y1, q.y);
+    bounds[idx].x2 = Math.max(bounds[idx].x2, q.x + q.w);
+    bounds[idx].y2 = Math.max(bounds[idx].y2, q.y + q.h);
+  }
+  for (const idx in bounds) {
+    const b = bounds[idx];
+    const pad = 15;
+    if (px >= b.x1 - pad && px <= b.x2 + pad && py >= b.y1 - pad && py <= b.y2 + pad) {
+      return parseInt(idx);
+    }
+  }
+  return -1;
+}
+
+// ★ID欄のどの行を掴んだか判定（"組10"|"組1"|"番号10"|"番号1"）
+function _hitIdRow(px, py, cfg) {
+  if (!cfg.id) return null;
+  const iw10 = mmToPx(Number(cfg.iw ?? 2.6));
+  const ih10 = mmToPx(Number(cfg.ih ?? 3.8));
+  const ix10 = mmToPx(Number(cfg.ix ?? 4.6));
+  const rows = getIdfMark(cfg);
+  for (const [name, a, b, m] of rows) {
+    const x1 = a - mmToPx(2);
+    const x2 = a + (m - 1) * ix10 + iw10 + mmToPx(2);
+    const y1 = b - mmToPx(2);
+    const y2 = b + ih10 + mmToPx(2);
+    if (px >= x1 && px <= x2 && py >= y1 && py <= y2) return name;
+  }
+  return null;
+}
+
+function setupCanvasDrag() {
+  const canvas = document.getElementById("preview");
+  const getPx = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width / rect.width, sy = canvas.height / rect.height;
+    return { x: (e.clientX - rect.left) * sx, y: (e.clientY - rect.top) * sy };
+  };
+
+  canvas.addEventListener("pointerdown", (e) => {
+    if (state.mode !== "fusion") return;
+    const p = getPx(e);
+    const cfg = state.fusionCfg;
+    _dragStartSnapshotTaken = false;
+
+    // 1) マーク見出しバー
+    if (cfg.mark_show_header !== false && cfg.nq > 0) {
+      const zone = { x: mmToPx(cfg.zone_x), y: mmToPx(cfg.zone_y), w: mmToPx(cfg.zone_w), h: computeMarkZoneHeight(cfg) };
+      const hdr = computeMarkHeaderRect(cfg, zone);
+      if (p.x >= hdr.x && p.x <= hdr.x + hdr.w && p.y >= hdr.y && p.y <= hdr.y + hdr.h) {
+        _dragState = {
+          kind: "mark_header",
+          start_x: p.x,
+          start_y: p.y,
+          ox: pxToMm(hdr.x),
+          oy: pxToMm(hdr.y),
+        };
+        if (!_dragStartSnapshotTaken) { pushHistory(); _dragStartSnapshotTaken = true; }
+        canvas.setPointerCapture(e.pointerId);
+        canvas.classList.add("dragging");
+        e.preventDefault();
+        return;
+      }
+    }
+
+    // 2) ID欄の組列／番号列マーク群
+    if (cfg.id) {
+      const idRowName = _hitIdRow(p.x, p.y, cfg);
+      if (idRowName) {
+        const isGroup = idRowName.startsWith("組");
+        const curX = isGroup ? Number(cfg.idGroupX ?? 0) : Number(cfg.idNumX ?? 0);
+        const curY = isGroup ? Number(cfg.idGroupY ?? 0) : Number(cfg.idNumY ?? 0);
+        _dragState = {
+          kind: isGroup ? "id_group" : "id_num",
+          start_x: p.x,
+          start_y: p.y,
+          ox: curX,
+          oy: curY,
+        };
+        if (!_dragStartSnapshotTaken) { pushHistory(); _dragStartSnapshotTaken = true; }
+        canvas.setPointerCapture(e.pointerId);
+        canvas.classList.add("dragging");
+        e.preventDefault();
+        return;
+      }
+    }
+
+    // 3) 記述大問
+    if (cfg.desc_manual) {
+      const layout = computeFusionLayout(cfg);
+
+      const qhit = _hitQuestionBox(p.x, p.y, layout);
+      if (qhit) {
+        const sec = cfg.desc_sections[qhit.section_idx];
+        if (!sec.q_offsets) sec.q_offsets = {};
+        if (!sec.q_offsets[qhit.q_index]) sec.q_offsets[qhit.q_index] = { dx: 0, dy: 0 };
+        const off = sec.q_offsets[qhit.q_index];
+        _dragState = {
+          kind: "desc_question",
+          sidx: qhit.section_idx,
+          qidx: qhit.q_index,
+          start_x: p.x,
+          start_y: p.y,
+          ox: off.dx,
+          oy: off.dy,
+        };
+        if (!_dragStartSnapshotTaken) { pushHistory(); _dragStartSnapshotTaken = true; }
+        canvas.setPointerCapture(e.pointerId);
+        canvas.classList.add("dragging");
+        e.preventDefault();
+        return;
+      }
+
+      const sidx = _hitSectionArea(p.x, p.y, layout);
+      if (sidx >= 0) {
+        const sec = cfg.desc_sections[sidx];
+        if (sec.mx == null || sec.my == null) {
+          const sh = layout.desc.sec_headers.find(h => h.section_idx === sidx);
+          if (sh) {
+            if (sec.mx == null) sec.mx = roundMm(pxToMm(sh.x));
+            if (sec.my == null) sec.my = roundMm(pxToMm(sh.y));
+            if (sec.mw == null) sec.mw = roundMm(pxToMm(sh.w));
+          }
+        }
+        _dragState = {
+          kind: "desc_section",
+          idx: sidx,
+          start_x: p.x,
+          start_y: p.y,
+          ox: sec.mx,
+          oy: sec.my,
+        };
+        if (!_dragStartSnapshotTaken) { pushHistory(); _dragStartSnapshotTaken = true; }
+        canvas.setPointerCapture(e.pointerId);
+        canvas.classList.add("dragging");
+        e.preventDefault();
+        return;
+      }
+    }
+
+    // 4) マーク領域の移動/リサイズ
+    const zh = computeMarkZoneHeight(cfg);
+    const zx = mmToPx(cfg.zone_x), zy = mmToPx(cfg.zone_y), zw = mmToPx(cfg.zone_w);
+    if (Math.abs(p.x - (zx + zw)) < 20 && Math.abs(p.y - (zy + zh)) < 20) {
+      _dragState = { kind:"resize", start_x:p.x, ox:cfg.zone_w };
+      if (!_dragStartSnapshotTaken) { pushHistory(); _dragStartSnapshotTaken = true; }
+      canvas.setPointerCapture(e.pointerId);
+      canvas.classList.add("resizing");
+      e.preventDefault(); return;
+    }
+    if (p.x >= zx && p.x <= zx + zw && p.y >= zy && p.y <= zy + zh) {
+      _dragState = { kind:"move", start_x:p.x, start_y:p.y, ox:cfg.zone_x, oy:cfg.zone_y };
+      if (!_dragStartSnapshotTaken) { pushHistory(); _dragStartSnapshotTaken = true; }
+      canvas.setPointerCapture(e.pointerId);
+      canvas.classList.add("dragging");
+      e.preventDefault();
+    }
+  });
+
+  canvas.addEventListener("pointermove", (e) => {
+    if (!_dragState) {
+      if (state.mode === "fusion") {
+        const p = getPx(e);
+        const cfg = state.fusionCfg;
+        let hover = false;
+        if (cfg.mark_show_header !== false && cfg.nq > 0) {
+          const zone = { x: mmToPx(cfg.zone_x), y: mmToPx(cfg.zone_y), w: mmToPx(cfg.zone_w), h: computeMarkZoneHeight(cfg) };
+          const hdr = computeMarkHeaderRect(cfg, zone);
+          if (p.x >= hdr.x && p.x <= hdr.x + hdr.w && p.y >= hdr.y && p.y <= hdr.y + hdr.h) hover = true;
+        }
+        if (!hover && cfg.id) {
+          if (_hitIdRow(p.x, p.y, cfg)) hover = true;
+        }
+        if (!hover && cfg.desc_manual) {
+          const layout = computeFusionLayout(cfg);
+          const onQ = _hitQuestionBox(p.x, p.y, layout);
+          const onS = onQ ? -1 : _hitSectionArea(p.x, p.y, layout);
+          hover = !!(onQ || onS >= 0);
+        }
+        canvas.classList.toggle("desc-hover", hover);
+      } else {
+        canvas.classList.remove("desc-hover");
+      }
+      return;
+    }
+    const p = getPx(e);
+    const cfg = state.fusionCfg;
+    if (_dragState.kind === "move") {
+      cfg.zone_x = roundMm(pxToMm(_dragState.ox * MM_TO_PX + p.x - _dragState.start_x));
+      cfg.zone_y = roundMm(pxToMm(_dragState.oy * MM_TO_PX + p.y - _dragState.start_y));
+      document.getElementById("fu_zone_x").value = cfg.zone_x;
+      document.getElementById("fu_zone_y").value = cfg.zone_y;
+    } else if (_dragState.kind === "resize") {
+      cfg.zone_w = Math.max(20, roundMm(pxToMm(_dragState.ox * MM_TO_PX + p.x - _dragState.start_x)));
+      document.getElementById("fu_zone_w").value = cfg.zone_w;
+    } else if (_dragState.kind === "mark_header") {
+      cfg.mark_header_x = roundMm(_dragState.ox + pxToMm(p.x - _dragState.start_x));
+      cfg.mark_header_y = roundMm(_dragState.oy + pxToMm(p.y - _dragState.start_y));
+      document.getElementById("fu_mark_header_x").value = cfg.mark_header_x;
+      document.getElementById("fu_mark_header_y").value = cfg.mark_header_y;
+    } else if (_dragState.kind === "id_group") {
+      cfg.idGroupX = roundMm(_dragState.ox + pxToMm(p.x - _dragState.start_x));
+      cfg.idGroupY = roundMm(_dragState.oy + pxToMm(p.y - _dragState.start_y));
+      document.getElementById("fu_idGroupX").value = cfg.idGroupX;
+      document.getElementById("fu_idGroupY").value = cfg.idGroupY;
+    } else if (_dragState.kind === "id_num") {
+      cfg.idNumX = roundMm(_dragState.ox + pxToMm(p.x - _dragState.start_x));
+      cfg.idNumY = roundMm(_dragState.oy + pxToMm(p.y - _dragState.start_y));
+      document.getElementById("fu_idNumX").value = cfg.idNumX;
+      document.getElementById("fu_idNumY").value = cfg.idNumY;
+    } else if (_dragState.kind === "desc_section") {
+      const sec = cfg.desc_sections[_dragState.idx];
+      sec.mx = roundMm(pxToMm(_dragState.ox * MM_TO_PX + p.x - _dragState.start_x));
+      sec.my = roundMm(pxToMm(_dragState.oy * MM_TO_PX + p.y - _dragState.start_y));
+      const mxEl = document.getElementById(`fu_desc_mx_${_dragState.idx}`);
+      const myEl = document.getElementById(`fu_desc_my_${_dragState.idx}`);
+      if (mxEl && document.activeElement !== mxEl) mxEl.value = sec.mx;
+      if (myEl && document.activeElement !== myEl) myEl.value = sec.my;
+    } else if (_dragState.kind === "desc_question") {
+      const sec = cfg.desc_sections[_dragState.sidx];
+      if (!sec.q_offsets) sec.q_offsets = {};
+      if (!sec.q_offsets[_dragState.qidx]) sec.q_offsets[_dragState.qidx] = { dx: 0, dy: 0 };
+      sec.q_offsets[_dragState.qidx].dx = roundMm(pxToMm((_dragState.ox || 0) * MM_TO_PX + (p.x - _dragState.start_x)));
+      sec.q_offsets[_dragState.qidx].dy = roundMm(pxToMm((_dragState.oy || 0) * MM_TO_PX + (p.y - _dragState.start_y)));
+    }
+    render();
+    e.preventDefault();
+  });
+
+  const endDrag = () => {
+    if (_dragState) autoSave();
+    _dragState = null;
+    _dragStartSnapshotTaken = false;
+    canvas.classList.remove("dragging");
+    canvas.classList.remove("resizing");
+  };
+  canvas.addEventListener("pointerup", endDrag);
+  canvas.addEventListener("pointercancel", endDrag);
+  canvas.addEventListener("pointerleave", () => {
+    canvas.classList.remove("desc-hover");
+  });
+}
+
+// ============================================================
+// 初期化
+// ============================================================
+function registerAnswerEditorEvents() {
+  document.getElementById("btn_open_answer_editor").addEventListener("click", openAnswerEditor);
+  document.getElementById("btn_ans_close").addEventListener("click", () => {
+    document.getElementById("answer_editor_modal").classList.add("hidden");
+    render();
+  });
+  document.getElementById("btn_bulk_score").addEventListener("click", () => {
+    const v = parseFloat(document.getElementById("bulk_score").value);
+    if (!Number.isFinite(v)) return;
+    const items = buildQuestionList(state.mode === "fusion" ? state.fusionCfg : state.cfg, state.mode);
+    items.forEach(it => state.customScores[String(it.q)] = v);
+    openAnswerEditor();
+  });
+  document.getElementById("btn_bulk_mode").addEventListener("click", () => {
+    const v = document.getElementById("bulk_mode").value;
+    if (!v) return;
+    const items = buildQuestionList(state.mode === "fusion" ? state.fusionCfg : state.cfg, state.mode);
+    items.forEach(it => {
+      if (it.type === "essay") return;
+      setGradingModeForQ(it.q, v);
+    });
+    openAnswerEditor();
+  });
+  document.getElementById("btn_ans_template").addEventListener("click", () => {
+    const mode = state.mode;
+    const cfg = mode === "fusion" ? state.fusionCfg : state.cfg;
+    const csv = exportTemplateCSV(cfg, mode);
+    const prefix = mode === "fusion" ? "answer_key_template_fusion" : "answer_key_template";
+    downloadText(csv, `${prefix}_${cfg.page_size}.csv`, "text/csv;charset=utf-8;");
+    log("テンプレートCSVを出力しました");
+  });
+  document.getElementById("btn_ans_export").addEventListener("click", () => {
+    const mode = state.mode;
+    const cfg = mode === "fusion" ? state.fusionCfg : state.cfg;
+    const csv = exportAnswerKeyCSV(cfg, mode);
+    const prefix = mode === "fusion" ? "answer_key_fusion" : "answer_key";
+    downloadText(csv, `${prefix}_${cfg.page_size}.csv`, "text/csv;charset=utf-8;");
+    log("answer_key.csv を出力しました");
+  });
+  document.getElementById("ans_csv_input").addEventListener("change", async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const mode = state.mode;
+    const cfg = mode === "fusion" ? state.fusionCfg : state.cfg;
+    try {
+      await importAnswerKeyCSV(file, cfg, mode);
+      openAnswerEditor();
+    } catch (err) {
+      log("CSV読込エラー: " + err.message);
+    } finally {
+      e.target.value = "";
+    }
+  });
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  autoLoad();
+
+  const presetSel = document.getElementById("preset");
+  for (const name of Object.keys(PRESET_COMMANDS)) {
+    const o = document.createElement("option"); o.value = name; o.textContent = name;
+    presetSel.appendChild(o);
+  }
+  const psSel = document.getElementById("page_size");
+  for (const [k,label] of Object.entries(PAGE_SIZE_LABELS)) {
+    const o = document.createElement("option"); o.value = k; o.textContent = label;
+    psSel.appendChild(o);
+  }
+  psSel.value = state.cfg.page_size || "a4_p";
+  document.getElementById("cmd").value = state.cfg.cmd || DEFAULT_COMMAND;
+  document.getElementById("tn").value = state.cfg.tn || DEF_CFG.tn;
+
+  const savedKey = localStorage.getItem("answersheet_api_key") || "";
+  const savedModel = localStorage.getItem("answersheet_api_model") || "gemini-2.0-flash";
+  if (savedKey) {
+    document.getElementById("api_key").value = savedKey;
+    document.getElementById("api_key_save").checked = true;
+  }
+  document.getElementById("api_model").value = savedModel;
+  document.getElementById("api_key_save").addEventListener("change", (e) => {
+    if (!e.target.checked) {
+      localStorage.removeItem("answersheet_api_key");
+    } else {
+      localStorage.setItem("answersheet_api_key", document.getElementById("api_key").value.trim());
+    }
+  });
+  document.getElementById("api_key").addEventListener("change", (e) => {
+    if (document.getElementById("api_key_save").checked) {
+      localStorage.setItem("answersheet_api_key", e.target.value.trim());
+    }
+  });
+  document.getElementById("api_model").addEventListener("change", (e) => {
+    localStorage.setItem("answersheet_api_model", e.target.value.trim());
+  });
+
+  document.getElementById("subtab-manual").addEventListener("click", () => switchCmdSubTab("manual"));
+  document.getElementById("subtab-text").addEventListener("click", () => switchCmdSubTab("text"));
+  document.querySelectorAll(".mode-tab").forEach(t => t.addEventListener("click", () => switchMode(t.dataset.mode)));
+  presetSel.addEventListener("change", e => {
+    document.getElementById("cmd").value = PRESET_COMMANDS[e.target.value];
+    updateFromUI();
+  });
+
+  document.getElementById("btn_fu_zone_center").addEventListener("click", () => {
+    const fc = state.fusionCfg;
+    const [W] = PAGE_SIZES[fc.page_size];
+    fc.zone_x = roundMm(pxToMm(W) / 2 - fc.zone_w / 2);
+    fc.zone_y = 44;
+    document.getElementById("fu_zone_x").value = fc.zone_x;
+    document.getElementById("fu_zone_y").value = fc.zone_y;
+    render(); pushHistory(); autoSave();
+  });
+  document.getElementById("btn_fu_add_desc").addEventListener("click", () => {
+    state.fusionCfg.desc_sections.push({
+      title: `大問${state.fusionCfg.desc_sections.length + 2}`,
+      type:"word", count:5, score:3, cols:1, lines:1, blanks:1,
+      mx: null, my: null, mw: null, q_offsets: {},
+    });
+    populateManualPositionsFromAuto(false);
+    renderFusionDescList(); render();
+    pushHistory(); autoSave();
+  });
+
+  document.getElementById("fu_desc_manual").addEventListener("change", (e) => {
+    const fc = state.fusionCfg;
+    fc.desc_manual = e.target.checked;
+    if (fc.desc_manual) populateManualPositionsFromAuto(false);
+    renderFusionDescList();
+    render();
+    pushHistory(); autoSave();
+  });
+
+  document.getElementById("btn_desc_reset_positions").addEventListener("click", () => {
+    resetManualPositions();
+    renderFusionDescList();
+    render();
+    pushHistory(); autoSave();
+    log("位置を自動レイアウトに戻しました");
+  });
+
+  document.getElementById("btn_fu_mark_header_reset").addEventListener("click", () => {
+    state.fusionCfg.mark_header_x = null;
+    state.fusionCfg.mark_header_y = null;
+    document.getElementById("fu_mark_header_x").value = "";
+    document.getElementById("fu_mark_header_y").value = "";
+    render(); pushHistory(); autoSave();
+    log("マーク見出し位置を自動に戻しました");
+  });
+
+  document.getElementById("btn_fu_id_offsets_reset").addEventListener("click", () => {
+    const fc = state.fusionCfg;
+    fc.idGroupX = 0; fc.idGroupY = 0; fc.idNumX = 0; fc.idNumY = 0;
+    document.getElementById("fu_idGroupX").value = 0;
+    document.getElementById("fu_idGroupY").value = 0;
+    document.getElementById("fu_idNumX").value = 0;
+    document.getElementById("fu_idNumY").value = 0;
+    render(); pushHistory(); autoSave();
+    log("ID欄（組列・番号列）位置をリセットしました");
+  });
+
+  document.getElementById("btn_cmd_to_fusion").addEventListener("click", importFromCmdMode);
+  document.getElementById("btn_fu_import_from_cmd").addEventListener("click", importFromCmdMode);
+
+  ["cmd","tn","page_size","page_cols","chk_id","chk_nm","chk_six","color_mode",
+   "fu_nq","fu_cols","fu_nc","fu_ls","fu_grp","fu_bw","fu_bh","fu_px","fu_py","fu_nw","fu_ng","fu_lh",
+   "fu_zone_x","fu_zone_y","fu_zone_w",
+   "fu_desc_sec_gap_mm","fu_desc_row_gap_mm","fu_desc_forced_scale",
+   "fu_mark_title","fu_mark_show_header","fu_mark_show_boxes",
+   "fu_mark_header_x","fu_mark_header_y",
+   "fu_idGroupX","fu_idGroupY","fu_idNumX","fu_idNumY",
+   "fu_tnX","fu_tnY","fu_tnS",
+   "fu_nmX","fu_nmY","fu_nmW","fu_nmH",
+   "fu_idY","fu_iw","fu_ih","fu_ix","fu_idl",
+   "fu_idLabelX","fu_idLabelY","fu_idLabelS"].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener(el.tagName === "TEXTAREA" || el.type === "text" || el.type === "number" ? "input" : "change", updateFromUI);
+  });
+
+  document.getElementById("fu_col_gap_mm").addEventListener("change", () => {
+    const fc = state.fusionCfg;
+    const newGap = parseFloat(document.getElementById("fu_col_gap_mm").value);
+    fc.col_gap_mm = Number.isFinite(newGap) && newGap >= 0 ? newGap : 6;
+    if (fc.page_cols === 2) {
+      const [W] = PAGE_SIZES[fc.page_size];
+      const pageWmm = W / 10;
+      fc.zone_w = roundMm((pageWmm - 28 - fc.col_gap_mm) / 2);
+      document.getElementById("fu_zone_w").value = fc.zone_w;
+    }
+    render();
+    pushHistory(); autoSave();
+  });
+
+  document.getElementById("fu_page_size").addEventListener("change", () => {
+    const fc = state.fusionCfg;
+    fc.page_size = document.getElementById("fu_page_size").value;
+    const [newPageW] = PAGE_SIZES[fc.page_size];
+    const pageWmm = newPageW / 10;
+    const gap = getColGapMm(fc);
+    fc.zone_x = 14;
+    fc.zone_y = 44;
+    fc.zone_w = fc.page_cols === 2 ? (pageWmm - 28 - gap) / 2 : pageWmm - 28;
+    document.getElementById("fu_zone_x").value = fc.zone_x;
+    document.getElementById("fu_zone_y").value = fc.zone_y;
+    document.getElementById("fu_zone_w").value = fc.zone_w;
+    if (fc.desc_manual) {
+      resetManualPositions();
+      renderFusionDescList();
+    }
+    render();
+    pushHistory(); autoSave();
+    log(`レイアウト変更: ${PAGE_SIZE_LABELS[fc.page_size]} → マーク領域を再配置`);
+  });
+
+  ["fu_page_cols", "fu_desc_position"].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("change", () => {
+      const fc = state.fusionCfg;
+      const prevPageCols = fc.page_cols;
+      fc.page_cols = parseInt(document.getElementById("fu_page_cols").value) || 1;
+      fc.desc_position = document.getElementById("fu_desc_position").value || "auto";
+      if (prevPageCols !== fc.page_cols) {
+        const [W] = PAGE_SIZES[fc.page_size];
+        const pageWmm = W / 10;
+        const gap = getColGapMm(fc);
+        fc.zone_x = 14;
+        fc.zone_y = 44;
+        fc.zone_w = fc.page_cols === 2 ? (pageWmm - 28 - gap) / 2 : pageWmm - 28;
+        document.getElementById("fu_zone_x").value = fc.zone_x;
+        document.getElementById("fu_zone_y").value = fc.zone_y;
+        document.getElementById("fu_zone_w").value = fc.zone_w;
+      }
+      if (fc.desc_manual) {
+        resetManualPositions();
+        renderFusionDescList();
+      }
+      render();
+      pushHistory(); autoSave();
+    });
+  });
+
+  window.addEventListener("resize", render);
+  setupCanvasDrag();
+
+  document.getElementById("btn_parse_local").addEventListener("click", () => {
+    const raw = document.getElementById("problem_text").value.trim();
+    if (!raw) { log("問題文を入力してください。"); return; }
+    const sections = [];
+    raw.split(/\r?\n/).forEach(line => {
+      const m = line.match(/^【?大問\s*(\d+)[^】]*】?\s*(.*)$/);
+      if (m) {
+        const t = m[2] || line;
+        const type = detectSectionType(t);
+        const countM = t.match(/(\d+)\s*問/);
+        const cnt = countM ? parseInt(countM[1]) : 5;
+        sections.push({
+          title: `大問${m[1]}`, type, count:cnt, score:DEFAULT_SCORE[type]||2,
+          cols:DEFAULT_COLS[type]||2, lines: type==="essay"?3:1,
+          choices:5, ls:"num", chars:0, blanks:1
+        });
+      }
+    });
+    if (!sections.length) { log("大問を抽出できませんでした。"); return; }
+    const cmdLines = sections.map(s => `${s.title} ${TYPE_LABELS[s.type]||"英単語"} ${s.count}問 ${s.score}点`);
+    document.getElementById("cmd").value = cmdLines.join("\n");
+    state.cfg.sections = sections;
+    state.parsedKey = [];
+    document.getElementById("parsed_summary").classList.remove("hidden");
+    document.getElementById("parsed_summary").textContent = `✅ ローカル解析: ${sections.length}大問（簡易版）`;
+    switchCmdSubTab("manual");
+    updateFromUI();
+    log(`ローカル解析: ${sections.length}大問`);
+  });
+
+  document.getElementById("btn_parse_ai").addEventListener("click", async () => {
+    const raw = document.getElementById("problem_text").value.trim();
+    const key = document.getElementById("api_key").value.trim() || localStorage.getItem("answersheet_api_key") || "";
+    const model = document.getElementById("api_model").value.trim() || "gemini-2.0-flash";
+    if (!raw) { log("問題文を入力してください。"); return; }
+    if (!key) { log("Gemini APIキーを入力してください。"); return; }
+    log("AI解析中...");
+    try {
+      const prompt = `以下のテスト問題を解析し、命令文と正答リストをJSONで返してください。
+命令文書式（1行1大問）:
+"大問1 マーク 10問 5択 1点" / "大問2 英単語 8問 3点" / "大問3 穴埋め 5問 3空欄 2点" / "大問4 訂正 5問 2点" / "大問5 短文 4問 4点" / "大問6 長文英作文 2問 10点 3行"
+出力JSON:
+{ "cmdLines": ["大問1 マーク 10問 5択 1点","大問2 英単語 8問 3点"], "keyItems":[{"q":1,"answer":"A"},{"q":11,"answer":"which"}] }
+テキスト:
+${raw}`;
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ contents:[{role:"user",parts:[{text:prompt}]}], generationConfig:{responseMimeType:"application/json",temperature:0.05} })
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const raw2 = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      const parsed = JSON.parse(raw2.replace(/^```json\s*/i,"").replace(/```\s*$/i,"").trim());
+      if (parsed.cmdLines) {
+        document.getElementById("cmd").value = parsed.cmdLines.join("\n");
+        state.cfg.sections = parseLayoutCommand(parsed.cmdLines.join("\n"));
+        state.parsedKey = (parsed.keyItems || []).map(k => ({ q:k.q, qNum:"", answer:k.answer, points:2, rubric:"" }));
+        document.getElementById("parsed_summary").classList.remove("hidden");
+        document.getElementById("parsed_summary").textContent = `✅ AI解析: ${parsed.cmdLines.length}大問 / ${state.parsedKey.length}問`;
+        switchCmdSubTab("manual");
+        updateFromUI();
+        log(`AI解析: ${state.parsedKey.length}問`);
+      }
+    } catch (e) { log("AI解析エラー: " + e.message); }
+  });
+
+  document.getElementById("btn_apply").addEventListener("click", updateFromUI);
+
+  document.getElementById("btn_png").addEventListener("click", () => {
+    const name = state.mode === "fusion" ? `fusion_${state.fusionCfg.page_size}.png` : `answersheet_${state.cfg.page_size}.png`;
+    downloadPNG(document.getElementById("preview"), name);
+    log(`PNG保存: ${name}`);
+  });
+  document.getElementById("btn_pdf").addEventListener("click", async () => {
+    const canvas = document.getElementById("preview");
+    const mode = state.mode;
+    const cfg = mode === "fusion" ? state.fusionCfg : state.cfg;
+    if (mode === "fusion") {
+      const [W,H] = PAGE_SIZES[cfg.page_size];
+      canvas.width = W; canvas.height = H;
+      drawFusionSheet(canvas.getContext("2d"), cfg, W, H, { showZone: false });
+    }
+    const name = mode === "fusion" ? `fusion_${cfg.page_size}.pdf` : `answersheet_${cfg.page_size}.pdf`;
+    try { await downloadPDF(canvas, mode, cfg, name); log(`PDF保存: ${name}（PNG・ロスレス）`); }
+    catch (e) { log("PDF保存エラー: " + e.message); }
+    render();
+  });
+  document.getElementById("btn_omr").addEventListener("click", async () => {
+    try {
+      const mode = state.mode;
+      const cfg = mode === "fusion" ? state.fusionCfg : state.cfg;
+      const m = mode === "fusion" ? await exportOmrManifestFusion(cfg) : await exportOmrManifestMixed(cfg);
+      const prefix = mode === "fusion" ? "omr_fusion" : "omr";
+      downloadJSON(m, `${prefix}_${cfg.page_size}.marks.json`);
+      log(`OMR manifest: ${m.questions.length}問`);
+    } catch (e) { log("OMR manifestエラー: " + e.message); }
+  });
+  document.getElementById("btn_desc").addEventListener("click", async () => {
+    try {
+      const mode = state.mode;
+      const cfg = mode === "fusion" ? state.fusionCfg : state.cfg;
+      const m = await exportDescManifest(cfg, mode === "fusion" ? "fusion" : "cmd");
+      const prefix = mode === "fusion" ? "desc_fusion" : "desc";
+      downloadJSON(m, `${prefix}_${cfg.page_size}.marks.json`);
+      log(`記述 manifest: ${m.items.length}問`);
+    } catch (e) { log("記述 manifestエラー: " + e.message); }
+  });
+  document.getElementById("btn_both").addEventListener("click", async () => {
+    try {
+      const mode = state.mode;
+      const cfg = mode === "fusion" ? state.fusionCfg : state.cfg;
+      const omr = mode === "fusion" ? await exportOmrManifestFusion(cfg) : await exportOmrManifestMixed(cfg);
+      const prefix = mode === "fusion" ? "fusion" : "";
+      downloadJSON(omr, `${prefix ? "omr_" + prefix : "omr"}_${cfg.page_size}.marks.json`);
+      const desc = await exportDescManifest(cfg, mode === "fusion" ? "fusion" : "cmd");
+      downloadJSON(desc, `${prefix ? "desc_" + prefix : "desc"}_${cfg.page_size}.marks.json`);
+      log(`2つ出力: OMR ${omr.questions.length}問 / 記述 ${desc.items.length}問`);
+    } catch (e) { log("manifestエラー: " + e.message); }
+  });
+  document.getElementById("btn_key").addEventListener("click", () => {
+    const mode = state.mode;
+    const cfg = mode === "fusion" ? state.fusionCfg : state.cfg;
+    const csv = exportAnswerKeyCSV(cfg, mode === "fusion" ? "fusion" : "cmd");
+    const prefix = mode === "fusion" ? "answer_key_fusion" : "answer_key";
+    downloadText(csv, `${prefix}_${cfg.page_size}.csv`, "text/csv;charset=utf-8;");
+    log("answer_key CSV 出力");
+  });
+
+  document.getElementById("btn_export_state").addEventListener("click", () => {
+    const obj = JSON.parse(snapshotState());
+    obj.answersMark = state.answersMark;
+    obj.answersDesc = state.answersDesc;
+    obj.gradingModes = state.gradingModes;
+    obj.customScores = state.customScores;
+    obj.parsedKey = state.parsedKey;
+    obj.savedAt = new Date().toISOString();
+    downloadJSON(obj, `answersheet_state_${Date.now()}.json`);
+    log("作業状態を保存しました");
+  });
+  document.getElementById("btn_import_state").addEventListener("click", () => {
+    document.getElementById("state_file_input").click();
+  });
+  document.getElementById("state_file_input").addEventListener("change", async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const o = JSON.parse(text);
+      if (o.cfg) state.cfg = { ...JSON.parse(JSON.stringify(DEF_CFG)), ...o.cfg };
+      if (o.fusionCfg) state.fusionCfg = { ...JSON.parse(JSON.stringify(DEF_FUSION)), ...o.fusionCfg };
+      if (o.answersMark) state.answersMark = o.answersMark;
+      if (o.answersDesc) state.answersDesc = o.answersDesc;
+      if (o.gradingModes) state.gradingModes = o.gradingModes;
+      if (o.customScores) state.customScores = o.customScores;
+      if (o.parsedKey) state.parsedKey = o.parsedKey;
+      syncFusionUIFromState();
+      renderFusionDescList();
+      render();
+      pushHistory(); autoSave();
+      log("作業状態を復元しました");
+    } catch (err) {
+      log("読込エラー: " + err.message);
+    } finally {
+      e.target.value = "";
+    }
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.ctrlKey && e.key.toLowerCase() === "z" && !e.shiftKey) {
+      const active = document.activeElement;
+      if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) return;
+      e.preventDefault();
+      undo();
+    } else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "z") {
+      const active = document.activeElement;
+      if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) return;
+      e.preventDefault();
+      redo();
+    }
+  });
+
+  registerAnswerEditorEvents();
+  populateManualPositionsFromAuto(false);
+  renderFusionDescList();
+  switchCmdSubTab("manual");
+  updateFromUI();
+  pushHistory();
+});
+</script>
+</body>
+</html>
